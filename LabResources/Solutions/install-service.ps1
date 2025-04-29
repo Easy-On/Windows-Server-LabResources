@@ -47,7 +47,8 @@ $path = "ou=$ouname,$domainDN"
 $name = 'PowerShell service'
 $samAccountName = 'PSService'
 $userPrincipalName = "$samAccountName@$domainFQDN"
-$newPassword = ConvertTo-SecureString -String 'Pa$$w0rd' -AsPlainText -Force
+$newPasswordPlain = 'Pa$$w0rd'
+$newPassword = ConvertTo-SecureString -String $newPasswordPlain -AsPlainText -Force
 $identity = "cn=$name,$path"
 
 $adUser = Get-ADUser -Filter { SamAccountName -eq $samAccountName }
@@ -145,6 +146,7 @@ $credential = New-Object `
     -ArgumentList $userPrincipalName, $newPassword
 
 Set-Service -Name $serviceName -StartupType Automatic -Credential $credential
+C:\LabResources\nssm.exe set $serviceName ObjectName "$userPrincipalName" "$newPasswordPlain"
 Restart-Service -Name $serviceName
 
 #endregion Install the service
