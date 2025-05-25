@@ -13,7 +13,7 @@ if (-not $SkipDependencies) {
         -Confirm:$false
 }
 
-$gatewayEndPoint = 'admincenter.ad.adatum.com'
+$gatewayEndPoint = 'https://admincenter.ad.adatum.com'
 
 #endregion Prerequisites
 
@@ -68,7 +68,7 @@ Select-Object `
         expression = { 'msft.sme.connection-type.server' }
     }, `
     @{ name = 'tags'; expression = {} }, `
-    @{ name = 'groupId'; expression = { } } |
+    @{ name = 'groupId'; expression = { 'global' } } |
 Export-Csv -Path $path -NoTypeInformation -Force
 
 Write-Verbose 'Append all client computers to the CSV file.'
@@ -80,7 +80,7 @@ Select-Object `
         expression = { 'msft.sme.connection-type.windows-client' }
     }, `
     @{ name = 'tags'; expression = {} }, `
-    @{ name = 'groupId'; expression = { } } |
+    @{ name = 'groupId'; expression = { 'global' } } |
 Export-Csv -Path $path -Append
 
 $computerName = 'VN1-SRV4'
@@ -96,7 +96,7 @@ if (-not (Test-Path -Path $destination)) {
 Copy-Item `
     -FromSession $pSSession `
     -Path `
-        "$env:ProgramFiles\Windows Admin Center\PowerShell\Modules\*\" `
+        "$env:ProgramFiles\WindowsAdminCenter\PowerShellModules\*\" `
     -Destination $destination `
     -Container `
     -Recurse `
@@ -106,7 +106,21 @@ Write-Verbose 'Remove the remote PowerShell session'
 Remove-PSSession $pSSession
     
 Write-Verbose 'Import connections'
-Import-Connection -GatewayEndpoint $gatewayEndPoint -fileName $path
+$credentials = Get-Credential `
+    -Message `
+        'Please enter your credentials to connect to the Windows Admin Center.'
+Write-Host @"
+Please navigate to the Windows Admin Center at $gatewayEndPoint/settings/access.
+Click Settings, then under Gateway, click Access.
+In Gateway Access, activate the checkbox Reveal Access key and click Copy.
+Paste the access key here and press Enter.
+"@
+$accessKey = Read-Host -Prompt 'Access key'
+Import-WACConnection `
+    -EndPoint $gatewayEndPoint `
+    -FileName $path `
+    -AccessKey $accessKey `
+    -Credentials $credentials
 
 #endregion Task: In Windows Admin Center, add connections
 
@@ -121,7 +135,7 @@ Write-Host '    Exercise 3: Install extensions'
 Write-Host '        Task: Install the Active Directory extension'
 
 Write-Warning @'
-Extension cannot be installed by script. Please install the Active Directory extension manually.
+Extension cannot be installed by script. Please install extensions manually.
 '@
 
 #endregion Task: Install the Active Directory extension
