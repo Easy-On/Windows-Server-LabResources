@@ -145,7 +145,6 @@ $credential = New-Object `
     -TypeName PSCredential `
     -ArgumentList $userPrincipalName, $newPassword
 
-Set-Service -Name $serviceName -StartupType Automatic -Credential $credential
 C:\LabResources\nssm.exe set $serviceName ObjectName "$userPrincipalName" "$newPasswordPlain"
 Restart-Service -Name $serviceName
 
