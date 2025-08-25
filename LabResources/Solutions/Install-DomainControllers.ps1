@@ -243,33 +243,47 @@ $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
 
 $computerName = 'VN1-SRV5', 'VN2-SRV1'
 $computerName = $computerName | 
-    Where-Object { $PSItem -notin $aDDomainController.Name } | ForEach-Object { "$PSItem.ad.adatum.com" }
+    Where-Object { $PSItem -notin $aDDomainController.Name } | 
+    ForEach-Object { "$PSItem.ad.adatum.com" }
 $domainName = 'ad.adatum.com'
 
 $dcDeploymentSuccess = $true
 if ($computerName) {
-    Write-Verbose "Promoting $computerName as additional domain controller in $domainName"
     try {
-        $psSession = Recycle-PSSession `
-            -ComputerName $computerName -Credential $adminCredential.adatum
-        $result = Invoke-Command `
-            -Session $psSession -ErrorAction Stop -ScriptBlock { `
-                $securePassword = ConvertTo-SecureString `
-                    -String $using:defaultPassword -AsPlainText -Force
-                $safeModeAdministratorPassword = $securePassword
-                $credential = New-Object `
-                    -TypeName pscredential `
-                    -ArgumentList `
-                        $using:adminUsername.adatum, $securePassword
+        $result = $computerName | ForEach-Object {
+            Write-Verbose "Promoting $(
+                    $PSItem
+                ) as additional domain controller in $(
+                    $domainName
+                )"
+            $psSession = Recycle-PSSession -ComputerName $PSItem `
+                -Credential $adminCredential.adatum
+            Invoke-Command `
+                -Session $psSession `
+                -ErrorAction Stop `
+                -ThrottleLimit 1 `
+                -ScriptBlock { `
+                    $securePassword = ConvertTo-SecureString `
+                        -String $using:defaultPassword -AsPlainText -Force
+                    $safeModeAdministratorPassword = $securePassword
+                    $credential = New-Object `
+                        -TypeName pscredential `
+                        -ArgumentList `
+                            $using:adminUsername.adatum, $securePassword
 
-                Install-ADDSDomainController `
-                    -DomainName $using:domainName `
-                    -Credential $credential `
-                    -SafeModeAdministratorPassword `
-                        $safeModeAdministratorPassword `
-                    -Force `
-                    -NoRebootOnCompletion
-            }
+                    Write-Verbose `
+                        "Promoting $(
+                            $env:hostname
+                        ) as additional domain controller."
+                    Install-ADDSDomainController `
+                        -DomainName $using:domainName `
+                        -Credential $credential `
+                        -SafeModeAdministratorPassword `
+                            $safeModeAdministratorPassword `
+                        -Force `
+                        -NoRebootOnCompletion
+                }
+        } 
     }
     catch {
         $dcDeploymentSuccess = $false
@@ -292,8 +306,8 @@ if ($computerName) {
                 -Force
         }
     }
-
 }
+
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
 #region Task 5: Configure forwarders
@@ -636,6 +650,7 @@ if ($dcDeploymentSuccess) {
 
 Write-Host '        Task 2: Change the IP address of the domain controller to decommission'
 
+
 if ($dcDeploymentSuccess) {
     $computerName = 'VN1-SRV1.ad.adatum.com'
     $newIPAddress = '10.1.1.9'
@@ -675,7 +690,9 @@ if ($dcDeploymentSuccess) {
             Where-Object { $PSItem -notin $desiredServerAddresses }
         ) -join (
             $desiredServerAddresses |
-            Where-Object { $PSItem -notin $dnsClientServerAddress.ServerAddresses }
+            Where-Object { 
+                $PSItem -notin $dnsClientServerAddress.ServerAddresses 
+            }
         )
     
         if ($serverAddresses) {
@@ -697,11 +714,17 @@ if ($dcDeploymentSuccess) {
                 -not ($netIPAddress |
                 Where-Object { $PSItem.IPAddress -eq $newIPAddress })
             ) {
-                Write-Verbose "Add the IP address $newIPAddress with the prefix length of 24 to $computerName."
+                Write-Verbose `
+                    "Add the IP address $(
+                        $newIPAddress
+                    ) with the prefix length of 24 to $(
+                        $computerName
+                    )."
                 $null = Invoke-Command `
                     -Session $psSession -ErrorAction Stop -ScriptBlock {
                         New-NetIPAddress `
-                            -InterfaceIndex $using:netIPAddress[0].InterfaceIndex `
+                            -InterfaceIndex `
+                                $using:netIPAddress[0].InterfaceIndex `
                             -IPAddress $using:newIPAddress `
                             -PrefixLength 24 `
                     }
@@ -715,7 +738,8 @@ if ($dcDeploymentSuccess) {
     
     }
     else {
-        Write-Warning "Could not connect to $computerName. Is it decommissioned already?"
+        Write-Warning `
+            "Could not connect to $computerName. Is it decommissioned already?"
     }
 
     
@@ -763,9 +787,6 @@ if ($dcDeploymentSuccess) {
             Write-Verbose 'Clear the DNS client cache.'
             Clear-DnsClientCache
         }
-
-
-
     }
 
     # Remove old IP address
@@ -811,11 +832,15 @@ if ($dcDeploymentSuccess) {
             }
         }
         else {
-            Write-Warning "Could not connect to $computerName. Is it decommissioned already?"
+            Write-Warning `
+                "Could not connect to $(
+                    $computerName
+                ). Is it decommissioned already?"
         }     
     }
 }
-else {
+
+if (-not $dcDeploymentSuccess) {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
 
@@ -823,34 +848,34 @@ else {
 
 #region Task 3: Update the host record for the domain controller to decommission
 
-Write-Host '        Task 3: Update the host record for the domain controller to decommission'
+# Write-Host '        Task 3: Update the host record for the domain controller to decommission'
 
-$computerName = 'VN1-SRV5.ad.adatum.com'
-$zoneName = 'ad.adatum.com'
+# $computerName = 'VN1-SRV5.ad.adatum.com'
+# $zoneName = 'ad.adatum.com'
 
-Write-Verbose 'Retrieve the old resource record'
-$rRType = 'A'
-$name = 'VN1-SRV1'
+# Write-Verbose 'Retrieve the old resource record'
+# $rRType = 'A'
+# $name = 'VN1-SRV1'
 
-$oldDnsServerResourceRecord = Get-DnsServerResourceRecord `
-    -ZoneName $zoneName `
-    -RRType $rRType `
-    -Name $name `
-    -ComputerName $computerName
+# $oldDnsServerResourceRecord = Get-DnsServerResourceRecord `
+#     -ZoneName $zoneName `
+#     -RRType $rRType `
+#     -Name $name `
+#     -ComputerName $computerName
 
-Write-Verbose 'Configure the new resource record'
-$newDnsServerResourceRecord = `
-    [ciminstance]::new($oldDnsServerResourceRecord)
+# Write-Verbose 'Configure the new resource record'
+# $newDnsServerResourceRecord = `
+#     [ciminstance]::new($oldDnsServerResourceRecord)
 
-$ipV4Address = '10.1.1.9' # The new IP address for the record
-$newDnsServerResourceRecord.RecordData.IPv4Address = $iPv4Address
+# $ipV4Address = '10.1.1.9' # The new IP address for the record
+# $newDnsServerResourceRecord.RecordData.IPv4Address = $iPv4Address
 
-Write-Verbose 'Update the resource record'
-Set-DnsServerResourceRecord `
-    -ZoneName $zoneName `
-    -OldInputObject $oldDnsServerResourceRecord `
-    -NewInputObject $newDnsServerResourceRecord `
-    -ComputerName $computerName
+# Write-Verbose 'Update the resource record'
+# Set-DnsServerResourceRecord `
+#     -ZoneName $zoneName `
+#     -OldInputObject $oldDnsServerResourceRecord `
+#     -NewInputObject $newDnsServerResourceRecord `
+#     -ComputerName $computerName
 
 #region Task 4: Add the IP address of the decommissioned domain controller to the new domain controller
 
