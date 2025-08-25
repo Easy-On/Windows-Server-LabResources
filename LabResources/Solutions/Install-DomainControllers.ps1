@@ -249,8 +249,8 @@ $domainName = 'ad.adatum.com'
 
 $dcDeploymentSuccess = $true
 if ($computerName) {
-    try {
-        $result = $computerName | ForEach-Object {
+    $computerName | ForEach-Object {
+        try {
             Write-Verbose "Promoting $(
                     $PSItem
                 ) as additional domain controller in $(
@@ -258,7 +258,7 @@ if ($computerName) {
                 )"
             $psSession = Recycle-PSSession -ComputerName $PSItem `
                 -Credential $adminCredential.adatum
-            Invoke-Command `
+            $result = Invoke-Command `
                 -Session $psSession `
                 -ErrorAction Stop `
                 -ThrottleLimit 1 `
@@ -283,36 +283,150 @@ if ($computerName) {
                         -Force `
                         -NoRebootOnCompletion
                 }
-        } 
-    }
-    catch {
-        $dcDeploymentSuccess = $false
-        Write-Error $Error[0]
-    }
-    finally {
-        $computerName = (
-            $result | Where-Object { $PSItem.RebootRequired }
-        ).PSComputerName
-    
-        if ($computerName) {
-            Write-Verbose "Restart $computerName"
-            $psSession | Remove-PSSession
-            Restart-Computer `
-                -ComputerName $computerName `
-                -WsmanAuthentication Default `
-                -Credential $adminCredential.adatum `
-                -Wait -For WinRM `
-                -TimeOut 1200 `
-                -Force
+        }
+        catch {
+            $dcDeploymentSuccess = $false
+            Write-Error $Error[0]
+        }
+        finally {
+            if ($result.RebootRequired) {
+                Write-Verbose "Restart $PSItem"
+                $psSession | Remove-PSSession
+                Restart-Computer `
+                    -ComputerName $PSItem `
+                    -WsmanAuthentication Default `
+                    -Credential $adminCredential.adatum `
+                    -Wait -For WinRM `
+                    -TimeOut 1200 `
+                    -Force
+            }
         }
     }
 }
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-#region Task 5: Configure forwarders
+#endregion Exercise 1: Deploy additional domain controllers
 
-Write-Host '        Task 5: Configure forwarders'
+#region Exercise 2: Check domain controller health
+
+Write-Host '    Exercise 2: Check domain controller health'
+
+#region Task 1: Verify DNS entries for Active Directory
+    
+Write-Host '        Task 1: Verify DNS entries for Active Directory'
+
+if ($dcDeploymentSuccess) {
+    $timeout = 600 # timeout in seconds
+    
+    Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
+    $endDate = (Get-Date).AddSeconds($timeout)
+    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $psSession = Recycle-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+    Write-Verbose "Waiting for CNAME records until $endDate."
+    while (
+        (
+            Invoke-Command `
+                -Session $psSession -ScriptBlock {
+                    Get-DnsServerResourceRecord `
+                        -ZoneName _msdcs.ad.adatum.com `
+                        -RRType CName |
+                    Select-Object -ExpandProperty RecordData |
+                    Where-Object {
+                        $PSItem.HostNameAlias -in @(
+                            'VN1-SRV5.ad.adatum.com.'
+                            'VN2-SRV1.ad.adatum.com.'
+                        )
+                    }
+                }
+        ).Count -ne 2 -and (Get-Date) -le $endDate
+    ) {
+        Start-Sleep -Seconds 5                
+    }
+
+    if ((Get-Date) -gt $endDate) {
+        Write-Warning 'CNAME records missing.'
+        $dcDeploymentSuccess = $false
+    }
+    
+    Write-Verbose `
+        'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
+    $endDate = (Get-Date).AddSeconds($timeout)
+    Write-Verbose "Waiting for SRV records until $endDate."
+    while (
+        (
+            Invoke-Command `
+                -Session $psSession -ScriptBlock {
+                    Get-DnsServerResourceRecord `
+                        -ZoneName ad.adatum.com `
+                        -RRType SRV |
+                    Select-Object -ExpandProperty RecordData |
+                    Where-Object { 
+                        $PSItem.DomainName -like '*VN1-SRV5.ad.adatum.com.' `
+                        -or $PSItem.DomainName -like '*VN2-SRV1.ad.adatum.com.'
+                    }
+                }
+        ).Count -lt 26 -and (Get-Date) -le $endDate
+    ) {
+        Start-Sleep -Seconds 5    
+    }
+    
+    if ((Get-Date) -gt $endDate) {
+        Write-Warning 'SRV records missing.'
+        $dcDeploymentSuccess = $false
+    }
+} else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+    
+#endregion Task 1: Verify DNS entries for Active Directory
+
+#region Task 2: Verify shares for Active Directory
+
+Write-Host '        Task 2: Verify shares for Active Directory'
+
+if ($dcDeploymentSuccess) {
+    Write-Verbose 'Verify NETLOGON and SYSVOL Shares on VN1-SRV5'
+
+    $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+    $psSession = Recycle-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+
+    $name = 'NETLOGON', 'SYSVOL'
+    Write-Verbose "Verify $name share on $computerName"
+    $smbShares = Invoke-Command -Session $psSession -ScriptBlock {
+        Get-SmbShare -Name $using:name -ErrorAction SilentlyContinue
+    }
+
+    foreach ($item in $computerName) {
+        $smbSharesOnComputer = $smbShares | 
+            Where-Object { $PSItem.PSComputerName -eq $computerName }
+
+        $missingShareName = $name | Where-Object {
+            $PSItem -notin $smbSharesOnComputer.Name
+        }
+        if ($missingShares) {
+            Write-Warning "$missingShareName share missing on $item"
+            $dcDeploymentSuccess = $false
+        }
+    }
+}
+else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 2: Verify shares for Active Directory
+
+#endregion Exercise 2: Check domain controller health
+
+#region Exercise 3: Optimize DNS
+
+Write-Host '    Exercise 3: Optimize DNS'
+
+#region Task 1: Configure forwarders
+
+Write-Host '        Task 1: Configure forwarders'
 
 if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
@@ -367,11 +481,11 @@ else {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
 
-#endregion Task 5: Configure forwarders
+#endregion Task 1: Configure forwarders
 
-#region Task 6: Configure DNS client settings
+#region Task 2: Configure DNS client settings
 
-Write-Host '        Task 6: Configure DNS client settings'
+Write-Host '        Task 2: Configure DNS client settings'
 
 if ($dcDeploymentSuccess) {
     $computerName = 'VN1-SRV5.ad.adatum.com'
@@ -413,120 +527,9 @@ if ($dcDeploymentSuccess) {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
 
-#endregion Task 6: Configure DNS client settings
+#endregion Task 2: Configure DNS client settings
 
-#endregion Exercise 1: Deploy additional domain controllers
-
-#region Exercise 2: Check domain controller health
-
-Write-Host '    Exercise 2: Check domain controller health'
-
-#region Task 1: Verify DNS entries for Active Directory
-    
-Write-Host '        Task 1: Verify DNS entries for Active Directory'
-
-if ($dcDeploymentSuccess) {
-    $timeout = 600 # timeout in seconds
-    
-    Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
-    $endDate = (Get-Date).AddSeconds($timeout)
-    $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-    Write-Verbose "Waiting for CNAME records until $endDate."
-    while (
-        (
-            Invoke-Command `
-                -Session $psSession -ScriptBlock {
-                    Get-DnsServerResourceRecord `
-                        -ZoneName _msdcs.ad.adatum.com `
-                        -RRType CName |
-                    Select-Object -ExpandProperty RecordData |
-                    Where-Object {
-                        $PSItem.HostNameAlias -in @(
-                            'VN1-SRV5.ad.adatum.com.'
-                            'VN2-SRV1.ad.adatum.com.'
-                        )
-                    }
-                }
-        ).Count -ne 2 -and (Get-Date) -le $endDate
-    ) {
-        Start-Sleep -Seconds 5                
-    }
-
-    if ((Get-Date) -gt $endDate) {
-        Write-Warning 'CNAME records missing.'
-        $dcDeploymentSuccess = $false
-    }
-    
-    Write-Verbose 'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
-    $endDate = (Get-Date).AddSeconds($timeout)
-    Write-Verbose "Waiting for SRV records until $endDate."
-    while (
-        (
-            Invoke-Command `
-                -Session $psSession -ScriptBlock {
-                    Get-DnsServerResourceRecord `
-                        -ZoneName ad.adatum.com `
-                        -RRType SRV |
-                    Select-Object -ExpandProperty RecordData |
-                    Where-Object { 
-                        $PSItem.DomainName -like '*VN1-SRV5.ad.adatum.com.' -or `
-                        $PSItem.DomainName -like '*VN2-SRV1.ad.adatum.com.'
-                    }
-                }
-        ).Count -lt 21 -and (Get-Date) -le $endDate
-    ) {
-        Start-Sleep -Seconds 5    
-    }
-    
-    if ((Get-Date) -gt $endDate) {
-        Write-Warning 'SRV records missing.'
-        $dcDeploymentSuccess = $false
-    }
-} else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-    
-#endregion Task 1: Verify DNS entries for Active Directory
-
-#region Task 2: Verify shares for Active Directory
-
-Write-Host '        Task 2: Verify shares for Active Directory'
-
-if ($dcDeploymentSuccess) {
-    Write-Verbose 'Verify NETLOGON and SYSVOL Shares on VN1-SRV5'
-
-    $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $name = 'NETLOGON', 'SYSVOL'
-    Write-Verbose "Verify $name share on $computerName"
-    $smbShares = Invoke-Command -Session $psSession -ScriptBlock {
-        Get-SmbShare -Name $using:name -ErrorAction SilentlyContinue
-    }
-
-    foreach ($item in $computerName) {
-        $smbSharesOnComputer = $smbShares | 
-            Where-Object { $PSItem.PSComputerName -eq $computerName }
-
-        $missingShareName = $name | Where-Object {
-            $PSItem -notin $smbSharesOnComputer.Name
-        }
-        if ($missingShares) {
-            Write-Warning "$missingShareName share missing on $item"
-            $dcDeploymentSuccess = $false
-        }
-    }
-}
-else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 2: Verify shares for Active Directory
-
-#endregion Exercise 2: Check domain controller health
+#endregion Exercise 3: Optimize DNS
 
 #region Exercise 3: Transfer flexible single master operation roles
 
@@ -877,6 +880,8 @@ if (-not $dcDeploymentSuccess) {
 #     -NewInputObject $newDnsServerResourceRecord `
 #     -ComputerName $computerName
 
+#endregion Task 3: Update the host record for the domain controller to decommission
+
 #region Task 4: Add the IP address of the decommissioned domain controller to the new domain controller
 
 Write-Host '        Task 4: Add the IP address of the decommissioned domain controller to the new domain controller'
@@ -973,6 +978,11 @@ if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
                             -Confirm:$false 
                 }
                 $null = $job | Wait-Job -ErrorAction Stop
+                $result = Receive-Job -Job $job
+                if ($result.Status -eq 'Error') {
+                    Write-Error $result.Message
+                    $uninstallDomainControllerSuccess = $false
+                }
             }
             catch {
                 $uninstallDomainControllerSuccess = $false
