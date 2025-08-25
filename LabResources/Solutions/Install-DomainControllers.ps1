@@ -28,7 +28,7 @@ $adminCredential = @{
 $startDate = Get-Date
 
 #region Helper functions
-function Connect-PSSession {
+function Recycle-PSSession {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
@@ -158,14 +158,30 @@ Write-Host '        Task 1: Install the Remote Server Administration DNS Server 
 
 #endregion Task 1: Install the Remote Server Administration DNS Server Tools
 
-#region Task 2: Install Active Directory Domain Services
+#region Task 2: Disable network adapters
 
-Write-Host '        Task 2: Install Active Directory Domain Services'
+Write-Host '        Task 2: Disable network adapters'
+
+Write-Verbose 'Disabling all network interfaces not connected to the 10.1.1.0 subnet'
+$cimSession = New-CimSession -ComputerName 'VN1-SRV5'
+Get-NetIPAddress -CimSession $cimSession |
+Where-Object { $PSItem.IPAddress -notlike '10.1.1.*' -and $PSItem.PrefixOrigin -eq 'Manual' } |
+Select-Object -ExpandProperty InterfaceAlias -Unique |
+ForEach-Object {
+    Disable-NetAdapter -Name $PSItem -CimSession $cimSession -Confirm:$false
+}
+Remove-CimSession $cimSession
+
+#endregion Task 2: Disable network adapters
+
+#region Task 3: Install Active Directory Domain Services
+
+Write-Host '        Task 3: Install Active Directory Domain Services'
 
 $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
 $name = 'AD-Domain-Services'
 
-$psSession = Connect-PSSession `
+$psSession = Recycle-PSSession `
     -ComputerName $computerName -Credential $adminCredential.adatum
 
 $windowsFeature = Invoke-Command -Session $psSession -ScriptBlock { 
@@ -203,16 +219,18 @@ if ($computerName) {
 }
 
 
-#endregion Task 2: Install Active Directory Domain Services
+#endregion Task 3: Install Active Directory Domain Services
 
-#region Task 3: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+#region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-Write-Host '        Task 3: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
+Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
 $dcDeploymentSuccess = $false
 
 $computerName = 'VN1-SRV5.ad.adatum.com'
-$psSession = Connect-PSSession `
+$psSession = Recycle-PSSession `
     -ComputerName $computerName -Credential $adminCredential.adatum
+
+Write-Verbose 'Getting existing domain controller'
 $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
     $securePassword = ConvertTo-SecureString `
         -String $using:defaultPassword -AsPlainText -Force
@@ -226,12 +244,13 @@ $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
 $computerName = 'VN1-SRV5', 'VN2-SRV1'
 $computerName = $computerName | 
     Where-Object { $PSItem -notin $aDDomainController.Name } | ForEach-Object { "$PSItem.ad.adatum.com" }
+$domainName = 'ad.adatum.com'
 
 $dcDeploymentSuccess = $true
 if ($computerName) {
     Write-Verbose "Promoting $computerName as additional domain controller in $domainName"
     try {
-        $psSession = Connect-PSSession `
+        $psSession = Recycle-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
         $result = Invoke-Command `
             -Session $psSession -ErrorAction Stop -ScriptBlock { `
@@ -242,14 +261,12 @@ if ($computerName) {
                     -TypeName pscredential `
                     -ArgumentList `
                         $using:adminUsername.adatum, $securePassword
-                $domainName = 'ad.adatum.com'
 
                 Install-ADDSDomainController `
-                    -DomainName $domainName `
+                    -DomainName $using:domainName `
                     -Credential $credential `
                     -SafeModeAdministratorPassword `
                         $safeModeAdministratorPassword `
-                    -InstallDns `
                     -Force `
                     -NoRebootOnCompletion
             }
@@ -271,23 +288,23 @@ if ($computerName) {
                 -WsmanAuthentication Default `
                 -Credential $adminCredential.adatum `
                 -Wait -For WinRM `
-                -TimeOut 600 `
+                -TimeOut 1200 `
                 -Force
         }
     }
 
 }
-#endregion Task 3: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+#endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-#region Task 4: Configure forwarders
+#region Task 5: Configure forwarders
 
-Write-Host '        Task 4: Configure forwarders'
+Write-Host '        Task 5: Configure forwarders'
 
 if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
         'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
     )) {
-        $psSession = Connect-PSSession `
+        $psSession = Recycle-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
 
         Write-Verbose `
@@ -336,16 +353,16 @@ else {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
 
-#endregion Task 4: Configure forwarders
+#endregion Task 5: Configure forwarders
 
-#region Task 5: Configure DNS client settings
+#region Task 6: Configure DNS client settings
 
-Write-Host '        Task 5: Configure DNS client settings'
+Write-Host '        Task 6: Configure DNS client settings'
 
 if ($dcDeploymentSuccess) {
     $computerName = 'VN1-SRV5.ad.adatum.com'
     $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
@@ -382,7 +399,7 @@ if ($dcDeploymentSuccess) {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
 
-#endregion Task 5: Configure DNS client settings
+#endregion Task 6: Configure DNS client settings
 
 #endregion Exercise 1: Deploy additional domain controllers
 
@@ -400,7 +417,7 @@ if ($dcDeploymentSuccess) {
     Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
     $endDate = (Get-Date).AddSeconds($timeout)
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose "Waiting for CNAME records until $endDate."
     while (
@@ -467,7 +484,7 @@ if ($dcDeploymentSuccess) {
     Write-Verbose 'Verify NETLOGON and SYSVOL Shares on VN1-SRV5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $name = 'NETLOGON', 'SYSVOL'
@@ -513,7 +530,7 @@ if ($dcDeploymentSuccess) {
     $identity = 'vn1-srv5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     
     Write-Verbose 'Get the properties of the AD domain.'
@@ -550,7 +567,7 @@ if ($dcDeploymentSuccess) {
     $identity = 'vn1-srv5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose 'Get the properties of the AD forest.'
     $aDForest = Invoke-Command -Session $psSession -ScriptBlock { Get-ADForest }
@@ -624,7 +641,7 @@ if ($dcDeploymentSuccess) {
     $newIPAddress = '10.1.1.9'
     $oldIPAddress = '10.1.1.8'
     
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName `
         -Credential $adminCredential.adatum `
         -ErrorAction SilentlyContinue
@@ -717,7 +734,7 @@ if ($dcDeploymentSuccess) {
             ).IPAddress -ne '10.1.1.9'
         ) {
             $computerName = 'VN1-SRV5.ad.adatum.com'
-            $psSession = Connect-PSSession `
+            $psSession = Recycle-PSSession `
                 -ComputerName $computerName -Credential $adminCredential.adatum
     
             $dnsServerResourceRecord = Invoke-Command `
@@ -764,7 +781,7 @@ if ($dcDeploymentSuccess) {
         ).IPAddress -ne $oldIPAddress
     ) {
         $psSession | Remove-PSSession
-        $psSession = Connect-PSSession `
+        $psSession = Recycle-PSSession `
             -ComputerName $computerName `
             -Credential $adminCredential.adatum `
             -ErrorAction SilentlyContinue
@@ -804,15 +821,46 @@ else {
 
 #endregion Task 2: Change the IP address of the domain controller to decommission
 
-#region Task 3: Add the IP address of the decommissioned domain controller to the new domain controller
+#region Task 3: Update the host record for the domain controller to decommission
 
-Write-Host '        Task 3: Add the IP address of the decommissioned domain controller to the new domain controller'
+Write-Host '        Task 3: Update the host record for the domain controller to decommission'
+
+$computerName = 'VN1-SRV5.ad.adatum.com'
+$zoneName = 'ad.adatum.com'
+
+Write-Verbose 'Retrieve the old resource record'
+$rRType = 'A'
+$name = 'VN1-SRV1'
+
+$oldDnsServerResourceRecord = Get-DnsServerResourceRecord `
+    -ZoneName $zoneName `
+    -RRType $rRType `
+    -Name $name `
+    -ComputerName $computerName
+
+Write-Verbose 'Configure the new resource record'
+$newDnsServerResourceRecord = `
+    [ciminstance]::new($oldDnsServerResourceRecord)
+
+$ipV4Address = '10.1.1.9' # The new IP address for the record
+$newDnsServerResourceRecord.RecordData.IPv4Address = $iPv4Address
+
+Write-Verbose 'Update the resource record'
+Set-DnsServerResourceRecord `
+    -ZoneName $zoneName `
+    -OldInputObject $oldDnsServerResourceRecord `
+    -NewInputObject $newDnsServerResourceRecord `
+    -ComputerName $computerName
+
+#region Task 4: Add the IP address of the decommissioned domain controller to the new domain controller
+
+Write-Host '        Task 4: Add the IP address of the decommissioned domain controller to the new domain controller'
 
 $addIPAddressSuccess = $false
 $computerName = 'VN1-SRV5.ad.adatum.com'
 
 if ($removeIPAddressSuccess) {
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $addIPAddressSuccess = $true
@@ -859,15 +907,15 @@ else {
             
 #endregion Task 3: Add the IP address of the decommissioned domain controller to the new domain controller
 
-#region Task 4: Demote the old domain controller
+#region Task 5: Demote the old domain controller
 
-Write-Host '        Task 4: Demote the old domain controller'
+Write-Host '        Task 5: Demote the old domain controller'
 
 $uninstallDomainControllerSuccess = $false
 
 if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
     $uninstallDomainControllerSuccess = $true
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName 'VN1-SRV5.ad.adatum.com' `
         -Credential $adminCredential.adatum
     if (
@@ -884,7 +932,7 @@ if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
     ) {
         $computerName = 'VN1-SRV1.ad.adatum.com'
         Write-Verbose "Demote the domain controller $computerName"
-        $psSession = Connect-PSSession `
+        $psSession = Recycle-PSSession `
             -ComputerName $computerName `
             -Credential $adminCredential.adatum `
     
@@ -917,9 +965,9 @@ else {
 
 #endregion Task 4: Demote the old domain controller
 
-#region Task 5: Remove roles from the decommissioned domain controller
+#region Task 6: Remove roles from the decommissioned domain controller
 
-Write-Host '        Task 5: Remove roles from the decommissioned domain controller'
+Write-Host '        Task 6: Remove roles from the decommissioned domain controller'
 
 if ($uninstallDomainControllerSuccess) {
     $computerName = 'VN1-SRV1.ad.adatum.com'
@@ -936,7 +984,7 @@ if ($uninstallDomainControllerSuccess) {
 
     Start-Sleep -Seconds 60
 
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName `
         -Credential $adminCredential.adatum `
         -ErrorAction SilentlyContinue
@@ -994,7 +1042,7 @@ Write-Host '        Task 1: Raise the domain functional level'
 if ($dcDeploymentSuccess) {
     $domainMode = 'Windows2016Domain'
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $aDDomain = Invoke-Command -Session $psSession -ScriptBlock { Get-ADDomain }
@@ -1022,7 +1070,7 @@ Write-Host '        Task 2: Raise the forest functional level'
 if ($dcDeploymentSuccess) {
     $forestMode = 'Windows2016Forest'
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Connect-PSSession `
+    $psSession = Recycle-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     $aDForest = Invoke-Command -Session $psSession -ScriptBlock { Get-ADForest }
         if ($aDForest.ForestMode -ne $forestMode) {
