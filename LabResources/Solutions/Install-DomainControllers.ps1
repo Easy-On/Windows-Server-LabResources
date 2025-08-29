@@ -40,18 +40,23 @@ function Recycle-PSSession {
 
     $parameters = $PSBoundParameters
 
-    $psSession = Get-PSSession | Where-Object { 
+    # Find existing sessions to the computers
+
+    $psSession = @()
+    $psSession += Get-PSSession | Where-Object { 
         $PSItem.Availability -eq 'Available' -and `
         $PSItem.ComputerName -in $ComputerName
     }
 
-    
-    $parameters.ComputerName = $parameters.ComputerName | Where-Object {
+    # Filter computer names without available session
+
+    $ComputerName = $ComputerName | Where-Object {
         $PSItem -notin $psSession.ComputerName
     }
 
-    if ($parameters.ComputerName) {
-        $newPSSession = New-PSSession @parameters
+    if ($ComputerName) {
+        $newPSSession = New-PSSession `
+            -ComputerName $ComputerName -Credential $Credential
         $psSession += $newPSSession
     }
     return $psSession
@@ -149,7 +154,8 @@ Write-Host '    Exercise 1: Deploy additional domain controllers'
 
 #region Task 1: Install the Remote Server Administration DNS Server Tools
 
-Write-Host '        Task 1: Install the Remote Server Administration DNS Server Tools'
+Write-Host `
+    '        Task 1: Install the Remote Server Administration DNS Server Tools'
 
 & $PSScriptRoot\Install-RSATModule.ps1 `
     -Name DNS `
@@ -162,10 +168,13 @@ Write-Host '        Task 1: Install the Remote Server Administration DNS Server 
 
 Write-Host '        Task 2: Disable network adapters'
 
-Write-Verbose 'Disabling all network interfaces not connected to the 10.1.1.0 subnet'
+Write-Verbose `
+    'Disabling all network interfaces not connected to the 10.1.1.0 subnet'
 $cimSession = New-CimSession -ComputerName 'VN1-SRV5'
 Get-NetIPAddress -CimSession $cimSession |
-Where-Object { $PSItem.IPAddress -notlike '10.1.1.*' -and $PSItem.PrefixOrigin -eq 'Manual' } |
+Where-Object { 
+    $PSItem.IPAddress -notlike '10.1.1.*' `
+    -and $PSItem.PrefixOrigin -eq 'Manual' } |
 Select-Object -ExpandProperty InterfaceAlias -Unique |
 ForEach-Object {
     Disable-NetAdapter -Name $PSItem -CimSession $cimSession -Confirm:$false
@@ -192,7 +201,10 @@ $computerName = `
     ($windowsFeature | Where-Object { -not $PSItem.Installed }).PSComputerName
 
 if ($computerName) {
-    Write-Verbose "Install the windows feature Active Directory Domain Services on $computerName."
+    Write-Verbose `
+        "Install the windows feature Active Directory Domain Services on $(
+            $computerName
+        )."
     $featureOperationResult = Invoke-Command `
         -Session $psSession -ScriptBlock { `
             Install-WindowsFeature -Name $using:name -IncludeManagementTools
@@ -516,7 +528,12 @@ if ($dcDeploymentSuccess) {
     )
 
     if ($serverAddresses) {
-        Write-Verbose "Set DNS client server addresses to $desiredServerAddresses on $computerName"
+        Write-Verbose `
+            "Set DNS client server addresses to $(
+                $desiredServerAddresses
+            ) on $(
+                $computerName
+            )"
         Invoke-Command -Session $psSession -ScriptBlock {
             Set-DnsClientServerAddress `
                 -InterfaceIndex $using:interfaceIndex `
@@ -638,7 +655,9 @@ if ($dcDeploymentSuccess) {
     )
 
     if ($serverAddresses) {
-        Write-Verbose "Set DNS client server addresses to $desiredServerAddresses on local computer"
+        Write-Verbose "Set DNS client server addresses to $(
+            $desiredServerAddresses
+        ) on local computer"
         Set-DnsClientServerAddress `
             -InterfaceIndex $interfaceIndex `
             -ServerAddresses $desiredServerAddresses `
@@ -699,7 +718,11 @@ if ($dcDeploymentSuccess) {
         )
     
         if ($serverAddresses) {
-            Write-Verbose "Set DNS client server addresses to $desiredServerAddresses on $computerName"
+            Write-Verbose "Set DNS client server addresses to $(
+                $desiredServerAddresses
+            ) on $(
+                $computerName
+            )"
             Invoke-Command -Session $psSession -ScriptBlock {
                 Set-DnsClientServerAddress `
                     -InterfaceIndex $using:netIPAddress[0].InterfaceIndex `
@@ -815,12 +838,18 @@ if ($dcDeploymentSuccess) {
                 $netIPAddress = Invoke-Command `
                     -Session $psSession -ErrorAction Stop -ScriptBlock {
                         $using:netIPAddress |
-                        Where-Object { $PSItem.IPAddress -eq $using:oldIPAddress }
+                        Where-Object { 
+                            $PSItem.IPAddress -eq $using:oldIPAddress 
+                        }
                     }
                 $removeIPAddressSuccess = $true
                 if ($netIPAddress) {
                     Write-Verbose `
-                        "Remove the IP address $oldIPAddress from $computerName."
+                        "Remove the IP address $(
+                            $oldIPAddress
+                        ) from $(
+                            $computerName
+                        )."
 
                     Invoke-Command `
                         -Session $psSession -ErrorAction Stop -ScriptBlock {
@@ -907,7 +936,10 @@ if ($removeIPAddressSuccess) {
         if (-not (
             $netIPAddress | Where-Object { $PSItem.IPAddress -eq $ipAddress }
         )) {
-            Write-Verbose "Add the IP address $ipAddress with the prefix length of 24 to the interface."
+            Write-Verbose `
+                "Add the IP address $(
+                    $ipAddress
+                ) with the prefix length of 24 to the interface."
             $null = Invoke-Command `
                 -Session $psSession -ErrorAction Stop -ScriptBlock {
                     New-NetIPAddress `
@@ -990,7 +1022,10 @@ if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
             }
         }
         else {
-            Write-Warning "Could not connect to $computerName. Is it decommissioned already?"
+            Write-Warning `
+                "Could not connect to $(
+                    $computerName
+                ). Is it decommissioned already?"
         }     
     }
 }
@@ -1032,7 +1067,12 @@ if ($uninstallDomainControllerSuccess) {
             }
 
         if ($windowsFeature) {
-            Write-Verbose "Uninstall the features $($windowsFeature.Name) from $computerName."
+            Write-Verbose `
+                "Uninstall the features $(
+                    $windowsFeature.Name
+                ) from $(
+                    $computerName
+                )."
 
             try {
                 $null = Invoke-Command `
@@ -1053,7 +1093,8 @@ if ($uninstallDomainControllerSuccess) {
         }
     }
     else {
-        Write-Warning "Could not connect to $computerName. Is it decommissioned already?"
+        Write-Warning `
+            "Could not connect to $computerName. Is it decommissioned already?"
     }
 
     $psSession | Remove-PSSession
