@@ -10,6 +10,7 @@ param (
 $adminUsername = @{
     adatum = 'Administrator@ad.adatum.com'
     local = '.\Administrator'
+    contoso = 'Administrator@ad.contoso.com'
 }
 $defaultPassword = 'Pa$$w0rd'
 $defaultSecurePassword = `
@@ -621,6 +622,280 @@ else {
 
 #region Exercise 4: Deploy a new forest
 
+#region Task 1: Install Active Directory Domain Services
+
+Write-Host '        Task 1: Install Active Directory Domain Services'
+
+$computerName = 'VN2-SRV2.ad.adatum.com'
+$name = 'AD-Domain-Services'
+
+$psSession = Recycle-PSSession `
+    -ComputerName $computerName -Credential $adminCredential.adatum
+
+$windowsFeature = Invoke-Command -Session $psSession -ScriptBlock { 
+    Get-WindowsFeature -Name $using:name 
+}
+
+$computerName = `
+    ($windowsFeature | Where-Object { -not $PSItem.Installed }).PSComputerName
+
+if ($computerName) {
+    Write-Verbose `
+        "Install the windows feature Active Directory Domain Services on $(
+            $computerName
+        )."
+    $featureOperationResult = Invoke-Command `
+        -Session $psSession -ScriptBlock { `
+            Install-WindowsFeature -Name $using:name -IncludeManagementTools
+        }
+    
+    $computerName = (
+        $featureOperationResult | 
+        Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
+    ).PSComputerName
+    
+    
+
+    if ($computerName) {
+        Write-Verbose "Restart $computerName."
+        $psSession | Remove-PSSession
+        Restart-Computer `
+            -ComputerName $computerName `
+            -WsmanAuthentication Default `
+            -Credential $adminCredential.adatum `
+            -Wait -For WinRM `
+            -TimeOut 600 `
+            -Force
+    }
+}
+
+
+#endregion Task 1: Install Active Directory Domain Services
+
+#region Task 2: Configure Active Directory Domain Services as a new forest
+
+Write-Host `
+    '        Task 2: Configure Active Directory Domain Services as a new forest'
+$dcDeploymentSuccess = $false
+
+$computerName = 'VN2-SRV2.ad.adatum.com'
+$psSession = Recycle-PSSession `
+    -ComputerName $computerName -Credential $adminCredential.local
+
+Write-Verbose 'Getting existing domain controller'
+$aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
+    $securePassword = ConvertTo-SecureString `
+        -String $using:defaultPassword -AsPlainText -Force
+    $credential = New-Object `
+        -TypeName pscredential `
+        -ArgumentList `
+            $using:adminUsername.contoso, $securePassword
+    Get-ADDomainController -Filter * -Credential $credential
+}
+
+$computerName = 'VN2-SRV2'
+$computerName = $computerName | 
+    Where-Object { $PSItem -notin $aDDomainController.Name } | 
+    ForEach-Object { "$PSItem.ad.adatum.com" }
+$domainName = 'ad.contoso.com'
+$domainNetbiosName = 'contoso'
+
+$dcDeploymentSuccess = $true
+if ($computerName) {
+        try {
+            Write-Verbose "Configuring new forest $(
+                    $domainName
+                ) on $(
+                    $computerName
+                )"
+            $psSession = Recycle-PSSession -ComputerName $PSItem `
+                -Credential $adminCredential.contoso
+            $result = Invoke-Command `
+                -Session $psSession `
+                -ErrorAction Stop `
+                -ScriptBlock { `
+                    $securePassword = ConvertTo-SecureString `
+                        -String $using:defaultPassword -AsPlainText -Force
+                    $safeModeAdministratorPassword = $securePassword
+                    $credential = New-Object `
+                        -TypeName pscredential `
+                        -ArgumentList `
+                            $using:adminUsername.contoso, $securePassword
+
+                    Write-Verbose `
+                        "Promoting $(
+                            $env:hostname
+                        ) as additional domain controller."
+                    Install-ADDSForest `
+                        -DomainName $using:domainName `
+                        -DomainNetbiosName $using:domainNetbiosName `
+                        -ForestMode default `
+                        -DomainMode default `
+                        -DomainNetbiosName $using:domainNetbiosName `
+                        -CreateDnsDelegation $false `
+                        -InstallDNS `
+                        -SafeModeAdministratorPassword `
+                            $safeModeAdministratorPassword `
+                        -Force `
+                        -NoRebootOnCompletion
+                }
+        }
+        catch {
+            $dcDeploymentSuccess = $false
+            Write-Error $Error[0]
+        }
+        finally {
+            if ($result.RebootRequired) {
+                Write-Verbose "Restart $PSItem"
+                $psSession | Remove-PSSession
+                Restart-Computer `
+                    -ComputerName $PSItem `
+                    -WsmanAuthentication Default `
+                    -Credential $adminCredential.adatum `
+                    -Wait -For WinRM `
+                    -TimeOut 1200 `
+                    -Force
+            }
+    }
+}
+
+#endregion Task 2: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+
+#region Task 3: Configure forwarders
+
+Write-Host '        Task 3: Configure forwarders'
+
+if ($dcDeploymentSuccess) {
+    foreach ($computerName in @(
+        'VN2-SRV2.ad.adatum.com'
+    )) {
+        $psSession = Recycle-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.contoso
+
+        Write-Verbose `
+            "Waiting for DNS service to start on $computerName"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            $name = 'DNS'
+            Get-Service -Name $name |
+            Where-Object { $PSItem.Status -ne 'Running' } |
+            Start-Service
+        }
+
+        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
+            Get-DnsServerForwarder
+        }
+
+        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
+
+        # Add forwarders
+
+        $ipAddress = $desiredIPAddresses |
+            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
+        
+        if ($ipAddress) {
+            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
+
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Add-DnsServerForwarder -IPAddress $using:ipAddress
+            }
+        }
+        
+        # Remove obsolete forwarders
+
+        $ipAddress = $dnsServerForwarder.IPAddress | 
+            Where-Object { $PSItem -notin $desiredIPAddresses }
+
+        if ($ipAddress) {
+            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
+    
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
+            }    
+        }
+    }
+}
+else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 3: Configure forwarders
+
+#region Task 4: Change the DNS client server addresses on CL3
+
+Write-Host '        Task 4: Change the DNS client server addresses on CL3'
+
+if ($dcDeploymentSuccess) {
+    $computerName = '3'
+    $desiredServerAddresses = '10.1.2.16'
+    $psSession = Recycle-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.local
+
+    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
+        (
+            Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
+        ).InterfaceIndex
+    }
+
+    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
+        Get-DnsClientServerAddress `
+            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
+    }
+
+    # Determine if DNS client server addresses need to be changed
+
+    $serverAddresses = (
+        $dnsClientServerAddress.ServerAddresses | 
+        Where-Object { $PSItem -notin $desiredServerAddresses }
+    ) -join (
+        $desiredServerAddress |
+        Where-Object { 
+            $PSItem -notin $dnsClientServerAddresses.ServerAddresses
+        }
+    )
+
+    if ($serverAddresses) {
+        Write-Verbose `
+            "Set DNS client server addresses to $(
+                $desiredServerAddresses
+            ) on $(
+                $computerName
+            )"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            Set-DnsClientServerAddress `
+                -InterfaceIndex $using:interfaceIndex `
+                -ServerAddresses $using:desiredServerAddresses `
+        }
+    }
+} else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 4: Change the DNS client server addresses on CL3
+
+#region Task 5: Join CL3 to the domain ad.contoso.com
+
+Write-Host '        Task 5: Join CL3 to the domain ad.contoso.com'
+
+if ($dcDeploymentSuccess) {
+    $computerName = 'CL3'
+    $domainName = 'ad.contoso.com'
+    $credential = $adminCredential.local
+    $restart = $env:COMPUTERNAME -ne $computerName
+    $psSession = Recycle-PSSession `
+        -ComputerName $computerName -Credential $credential
+
+    Invoke-Command -Session $psSession -ScriptBlock {
+        Add-Computer `
+            -DomainName $using:domainName `
+            -Credential $using:credential `
+            -Restart:$using:restart
+    }
+    $domainJoinSuccess = $true
+} else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
 # CL3 may need a restart at the end to complete domain join
 
 if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
@@ -629,7 +904,9 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
     Restart-Computer
 }
 
-#endregion Exercise 4:Deploy a new forest
+#endregion Task 5: Join CL3 to the domain ad.contoso.com
+
+#endregion Exercise 4: Deploy a new forest
 
 Get-PSSession | Remove-PSSession
 
