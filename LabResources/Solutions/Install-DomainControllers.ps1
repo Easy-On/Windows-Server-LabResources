@@ -460,7 +460,7 @@ if ($dcDeploymentSuccess) {
                         )
                     }
                 }
-        ).Count -ne 2 -and (Get-Date) -le $endDate
+        ).Count -lt 2 -and (Get-Date) -le $endDate
     ) {
         Start-Sleep -Seconds 5                
     }
@@ -481,10 +481,11 @@ if ($dcDeploymentSuccess) {
                     Get-DnsServerResourceRecord `
                         -ZoneName ad.adatum.com `
                         -RRType SRV |
-                    Select-Object -ExpandProperty RecordData |
                     Where-Object { 
-                        $PSItem.DomainName -like '*VN1-SRV5.ad.adatum.com.' `
-                        -or $PSItem.DomainName -like '*VN2-SRV1.ad.adatum.com.'
+                        $PSItem.RecordData.DomainName -eq `
+                            'vn1-srv5.ad.adatum.com.' `
+                        -or $PSItem.RecordData.DomainName -eq `
+                            'vn2-srv1.ad.adatum.com.'
                     }
                 }
         ).Count -lt 26 -and (Get-Date) -le $endDate
@@ -688,7 +689,8 @@ $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
         -TypeName pscredential `
         -ArgumentList `
             $using:adminUsername.contoso, $securePassword
-    Get-ADDomainController -Filter * -Credential $credential
+    Get-ADDomainController `
+        -Filter * -Credential $credential -ErrorAction SilentlyContinue
 }
 
 $computerName = 'VN2-SRV2'
