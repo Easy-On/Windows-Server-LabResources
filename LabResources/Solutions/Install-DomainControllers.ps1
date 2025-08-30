@@ -716,7 +716,7 @@ if ($computerName) {
                     $computerName
                 )"
             $psSession = Request-PSSession -ComputerName $computerName `
-                -Credential $adminCredential.contoso
+                -Credential $adminCredential.local
             $result = Invoke-Command `
                 -Session $psSession `
                 -ErrorAction Stop `
