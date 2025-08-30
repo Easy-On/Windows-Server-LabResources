@@ -317,115 +317,6 @@ if ($computerName) {
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-#region Task 5: Configure forwarders
-
-Write-Host '        Task 5: Configure forwarders'
-
-if ($dcDeploymentSuccess) {
-    foreach ($computerName in @(
-        'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-    )) {
-        $psSession = Request-PSSession `
-            -ComputerName $computerName -Credential $adminCredential.adatum
-
-        Write-Verbose `
-            "Waiting for DNS service to start on $computerName"
-        Invoke-Command -Session $psSession -ScriptBlock {
-            $name = 'DNS'
-            Get-Service -Name $name |
-            Where-Object { $PSItem.Status -ne 'Running' } |
-            Start-Service
-        }
-
-        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
-            Get-DnsServerForwarder
-        }
-
-        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
-
-        # Add forwarders
-
-        $ipAddress = $desiredIPAddresses |
-            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
-        
-        if ($ipAddress) {
-            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
-
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Add-DnsServerForwarder -IPAddress $using:ipAddress
-            }
-        }
-        
-        # Remove obsolete forwarders
-
-        $ipAddress = $dnsServerForwarder.IPAddress | 
-            Where-Object { $PSItem -notin $desiredIPAddresses }
-
-        if ($ipAddress) {
-            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
-    
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
-            }    
-        }
-    }
-}
-else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 5: Configure forwarders
-
-#region Task 6: Configure DNS client settings
-
-Write-Host '        Task 6: Configure DNS client settings'
-
-if ($dcDeploymentSuccess) {
-    $computerName = 'VN1-SRV5.ad.adatum.com'
-    $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
-    $psSession = Request-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
-        (
-            Get-NetIPAddress -AddressFamily IPv4 |
-            Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
-        ).InterfaceIndex
-    }
-
-    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
-        Get-DnsClientServerAddress `
-            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
-    }
-
-    # Determine if DNS client server addresses need to be changed
-
-    $serverAddresses = (
-        $dnsClientServerAddress.ServerAddresses | 
-        Where-Object { $PSItem -notin $desiredServerAddresses }
-    ) -join (
-        $desiredServerAddress |
-        Where-Object { $PSItem -notin $dnsClientServerAddresses.ServerAddresses }
-    )
-
-    if ($serverAddresses) {
-        Write-Verbose `
-            "Set DNS client server addresses to $(
-                $desiredServerAddresses
-            ) on $(
-                $computerName
-            )"
-        Invoke-Command -Session $psSession -ScriptBlock {
-            Set-DnsClientServerAddress `
-                -InterfaceIndex $using:interfaceIndex `
-                -ServerAddresses $using:desiredServerAddresses `
-        }
-    }
-} else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 6: Configure DNS client settings
 
 #endregion Exercise 1: Deploy additional domain controllers
 #region Exercise 2: Check domain controller health
@@ -540,6 +431,122 @@ else {
 #endregion Task 2: Verify shares for Active Directory
 
 #endregion Exercise 2: Check domain controller health
+
+#region Exercise 3: Optimize DNS
+
+Write-Host '    Exercise 3: Optimize DNS'
+
+#region Task 1: Configure forwarders
+
+Write-Host '        Task 1: Configure forwarders'
+
+if ($dcDeploymentSuccess) {
+    foreach ($computerName in @(
+        'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+    )) {
+        $psSession = Request-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.adatum
+
+        Write-Verbose `
+            "Waiting for DNS service to start on $computerName"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            $name = 'DNS'
+            Get-Service -Name $name |
+            Where-Object { $PSItem.Status -ne 'Running' } |
+            Start-Service
+        }
+
+        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
+            Get-DnsServerForwarder
+        }
+
+        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
+
+        # Add forwarders
+
+        $ipAddress = $desiredIPAddresses |
+            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
+        
+        if ($ipAddress) {
+            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
+
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Add-DnsServerForwarder -IPAddress $using:ipAddress
+            }
+        }
+        
+        # Remove obsolete forwarders
+
+        $ipAddress = $dnsServerForwarder.IPAddress | 
+            Where-Object { $PSItem -notin $desiredIPAddresses }
+
+        if ($ipAddress) {
+            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
+    
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
+            }    
+        }
+    }
+}
+else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 1: Configure forwarders
+
+#region Task 2: Configure DNS client settings
+
+Write-Host '        Task 2: Configure DNS client settings'
+
+if ($dcDeploymentSuccess) {
+    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
+    $psSession = Request-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+
+    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
+        (
+            Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
+        ).InterfaceIndex
+    }
+
+    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
+        Get-DnsClientServerAddress `
+            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
+    }
+
+    # Determine if DNS client server addresses need to be changed
+
+    $serverAddresses = (
+        $dnsClientServerAddress.ServerAddresses | 
+        Where-Object { $PSItem -notin $desiredServerAddresses }
+    ) -join (
+        $desiredServerAddress |
+        Where-Object { $PSItem -notin $dnsClientServerAddresses.ServerAddresses }
+    )
+
+    if ($serverAddresses) {
+        Write-Verbose `
+            "Set DNS client server addresses to $(
+                $desiredServerAddresses
+            ) on $(
+                $computerName
+            )"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            Set-DnsClientServerAddress `
+                -InterfaceIndex $using:interfaceIndex `
+                -ServerAddresses $using:desiredServerAddresses `
+        }
+    }
+} else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 2: Configure DNS client settings
+
+#endregion Exercise 3: Optimize DNS
 
 #region Exercise 3: Transfer flexible single master operation roles
 
@@ -763,7 +770,9 @@ if ($dcDeploymentSuccess) {
         'VN2-SRV2.ad.adatum.com'
     )) {
         Wait-WSMan `
-            -ComputerName $computerName -Credential $adminCredential.contoso
+            -ComputerName $computerName `
+            -Credential $adminCredential.contoso `
+            -Authentication Negotiate
         $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.contoso
 
