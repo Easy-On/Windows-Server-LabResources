@@ -644,13 +644,56 @@ else {
 
 Write-Host '    Exercise 3: Enable database 32K pages'
 
-#region Task 1: Enable database 32K pages
+#region Task 1: Verify that the domain has a 32k page capable database
 
-Write-Host '        Task 1: Enable database 32K pages'
+Write-Host `
+    '        Task 1: Verify that the domain has a 32k page capable database'
+
+$psSession = Recycle-PSSession `
+    -Computername 'VN1-SRV5.ad.adatum.com' -Credential $adminCredential.adatum
 
 
+$properties = 'msDS-JetDBPageSize'
+$jetDBPageSize = Invoke-Command -Session $psSession -ScriptBlock {
+    $domainDN = (Get-ADDomain).DistinguishedName
+    Get-ADObject `
+        -LDAPFilter '(ObjectClass=nTDSDSA)' `
+        -SearchBase "CN=Configuration,$domainDN" `
+        -Properties $using:properties |
+    Select-Object -ExpandProperty $using:properties
+}
 
-#endregion Task 1: Enable database 32K pages
+Write-Host "$using:properties is $jetDBPageSize"
+
+#endregion Task 1: Verify that the domain has a 32k page capable database
+
+#region Task 2: Enable the Database 32K pages optional feature
+
+Write-Host '        Task 2: Enable the Database 32K pages optional feature'
+
+$psSession = Recycle-PSSession `
+    -Computername 'VN1-SRV5.ad.adatum.com' -Credential $adminCredential.adatum
+
+if ($jetDBPageSize -eq 32768) {
+    Write-Verbose 'Enabling Database 32k pages feature'
+    Invoke-Command -Session $psSession -ScriptBlock {
+    $target = (Get-ADDomain).DistinguishedName
+        Enable-ADOptionalFeature `
+            -Identity 'Database 32k pages feature' `
+            -Scope 'ForestOrConfigurationSet' `
+            -Target $target
+    }
+}
+
+if ($jetDBPageSize -ne 32768) {
+    Write-Error `
+        "$(
+            $properties
+        ) is not 32768. Did the forest functional level get raised?"
+}
+
+
+#endregion Task 2: Enable database 32K pages
 
 #endregion Exercise 3: Enable database 32K pages
 
