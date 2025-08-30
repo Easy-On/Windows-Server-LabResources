@@ -621,6 +621,8 @@ else {
 
 #region Exercise 4: Deploy a new forest
 
+Write-Host '    Exercise 4: Deploy a new forest'
+
 #region Task 1: Install Active Directory Domain Services
 
 Write-Host '        Task 1: Install Active Directory Domain Services'
@@ -689,8 +691,13 @@ $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
         -TypeName pscredential `
         -ArgumentList `
             $using:adminUsername.contoso, $securePassword
-    Get-ADDomainController `
-        -Filter * -Credential $credential -ErrorAction SilentlyContinue
+    try {
+        Get-ADDomainController `
+            -Filter * -Credential $credential -ErrorAction Stop
+    }
+    catch {
+        Write-Verbose 'No existing domain controller found.'
+    }
 }
 
 $computerName = 'VN2-SRV2'
@@ -704,11 +711,11 @@ $dcDeploymentSuccess = $true
 if ($computerName) {
         try {
             Write-Verbose "Configuring new forest $(
-                    $domainName
+                    $using:domainName
                 ) on $(
-                    $computerName
+                    $using:computerName
                 )"
-            $psSession = Request-PSSession -ComputerName $PSItem `
+            $psSession = Request-PSSession -ComputerName $computerName `
                 -Credential $adminCredential.contoso
             $result = Invoke-Command `
                 -Session $psSession `
@@ -718,9 +725,11 @@ if ($computerName) {
                         -String $using:defaultPassword -AsPlainText -Force
                     $safeModeAdministratorPassword = $securePassword
                     Write-Verbose `
-                        "Promoting $(
-                            $env:hostname
-                        ) as additional domain controller."
+                        "Installing new forest $(
+                            $using:domainName
+                        ) on $(
+                            $using:computerName
+                        )"
                     Install-ADDSForest `
                         -DomainName $using:domainName `
                         -DomainNetbiosName $using:domainNetbiosName `
