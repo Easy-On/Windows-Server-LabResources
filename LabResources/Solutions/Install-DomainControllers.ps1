@@ -711,9 +711,9 @@ $dcDeploymentSuccess = $true
 if ($computerName) {
         try {
             Write-Verbose "Configuring new forest $(
-                    $using:domainName
+                    $domainName
                 ) on $(
-                    $using:computerName
+                    $computerName
                 )"
             $psSession = Request-PSSession -ComputerName $computerName `
                 -Credential $adminCredential.contoso
@@ -724,19 +724,11 @@ if ($computerName) {
                     $securePassword = ConvertTo-SecureString `
                         -String $using:defaultPassword -AsPlainText -Force
                     $safeModeAdministratorPassword = $securePassword
-                    Write-Verbose `
-                        "Installing new forest $(
-                            $using:domainName
-                        ) on $(
-                            $using:computerName
-                        )"
                     Install-ADDSForest `
                         -DomainName $using:domainName `
                         -DomainNetbiosName $using:domainNetbiosName `
                         -ForestMode default `
                         -DomainMode default `
-                        -DomainNetbiosName $using:domainNetbiosName `
-                        -CreateDnsDelegation $false `
                         -InstallDNS `
                         -SafeModeAdministratorPassword `
                             $safeModeAdministratorPassword `
@@ -750,10 +742,10 @@ if ($computerName) {
         }
         finally {
             if ($result.RebootRequired) {
-                Write-Verbose "Restart $PSItem"
+                Write-Verbose "Restart $computerName"
                 $psSession | Remove-PSSession
                 Restart-Computer `
-                    -ComputerName $PSItem `
+                    -ComputerName $computerName `
                     -WsmanAuthentication Default `
                     -Credential $adminCredential.adatum `
                     -Wait -For WinRM `
@@ -819,7 +811,7 @@ if ($dcDeploymentSuccess) {
     }
 }
 else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Warning 'Forest not deployed, skipping task.'
 }
 
 #endregion Task 3: Configure forwarders
@@ -872,7 +864,7 @@ if ($dcDeploymentSuccess) {
         }
     }
 } else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Warning 'Forest not deployed, skipping task.'
 }
 
 #endregion Task 4: Change the DNS client server addresses on CL3
@@ -897,7 +889,7 @@ if ($dcDeploymentSuccess) {
     }
     $domainJoinSuccess = $true
 } else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Warning 'Forest not deployed, skipping task.'
 }
 
 # CL3 may need a restart at the end to complete domain join
