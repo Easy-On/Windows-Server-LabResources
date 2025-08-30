@@ -709,53 +709,50 @@ $domainNetbiosName = 'contoso'
 
 $dcDeploymentSuccess = $true
 if ($computerName) {
-        try {
-            Write-Verbose "Configuring new forest $(
-                    $domainName
-                ) on $(
-                    $computerName
-                )"
-            $psSession = Request-PSSession -ComputerName $computerName `
-                -Credential $adminCredential.local
-            $result = Invoke-Command `
-                -Session $psSession `
-                -ErrorAction Stop `
-                -ScriptBlock { `
-                    $securePassword = ConvertTo-SecureString `
-                        -String $using:defaultPassword -AsPlainText -Force
-                    $safeModeAdministratorPassword = $securePassword
-                    Install-ADDSForest `
-                        -DomainName $using:domainName `
-                        -DomainNetbiosName $using:domainNetbiosName `
-                        -ForestMode default `
-                        -DomainMode default `
-                        -InstallDNS `
-                        -SafeModeAdministratorPassword `
-                            $safeModeAdministratorPassword `
-                        -Force `
-                        -NoRebootOnCompletion
-                }
-        }
-        catch {
-            $dcDeploymentSuccess = $false
-            Write-Error $Error[0]
-        }
-        finally {
-            if ($result.RebootRequired) {
-                Write-Verbose "Restart $computerName"
-                $psSession | Remove-PSSession
-                Restart-Computer `
-                    -ComputerName $computerName `
-                    -WsmanAuthentication Default `
-                    -Credential $adminCredential.adatum `
-                    -Wait -For WinRM `
-                    -TimeOut 1200 `
+    try {
+        Write-Verbose "Configuring new forest $(
+                $domainName
+            ) on $(
+                $computerName
+            )"
+        $psSession = Request-PSSession -ComputerName $computerName `
+            -Credential $adminCredential.local
+        $job = Invoke-Command `
+            -Session $psSession `
+            -ErrorAction Stop `
+            -AsJob `
+            -ScriptBlock { `
+                $securePassword = ConvertTo-SecureString `
+                    -String $using:defaultPassword -AsPlainText -Force
+                $safeModeAdministratorPassword = $securePassword
+                Install-ADDSForest `
+                    -DomainName $using:domainName `
+                    -DomainNetbiosName $using:domainNetbiosName `
+                    -ForestMode default `
+                    -DomainMode default `
+                    -InstallDNS `
+                    -SafeModeAdministratorPassword `
+                        $safeModeAdministratorPassword `
                     -Force
             }
+
+        $null = $job | Wait-Job -ErrorAction Stop
+        $result = Receive-Job -Job $job
+        if ($result.Status -eq 'Error') {
+            Write-Error $result.Message
+            $dcDeploymentSuccess = $false
+        }
+    }
+    catch {
+        $dcDeploymentSuccess = $false
+        Write-Error $Error[0]
+    }
+    finally {
+        $psSession | Remove-PSSession
     }
 }
 
-#endregion Task 2: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+#endregion Task 2: Configure Active Directory Domain Services as a new forest
 
 #region Task 3: Configure forwarders
 
@@ -765,6 +762,8 @@ if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
         'VN2-SRV2.ad.adatum.com'
     )) {
+        Wait-WSMan `
+            -ComputerName $computerName -Credential $adminCredential.contoso
         $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.contoso
 
@@ -821,7 +820,7 @@ else {
 Write-Host '        Task 4: Change the DNS client server addresses on CL3'
 
 if ($dcDeploymentSuccess) {
-    $computerName = '3'
+    $computerName = 'CL3'
     $desiredServerAddresses = '10.1.2.16'
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.local
