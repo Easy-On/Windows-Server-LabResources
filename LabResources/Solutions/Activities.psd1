@@ -249,5 +249,11 @@
             Script = 'Install-Forest.ps1'
             DependsOn = @('InstallRSAT')
         }
+        @{
+            ID = 'CompleteADUpgrade'
+            Displayname = 'Lab: Finalizing Acitve Directory upgrade'
+            Script = 'Complete-ADUpgrade.ps1'
+            DependsOn = @('InstallDomainControllers')
+        }
     )
 }
