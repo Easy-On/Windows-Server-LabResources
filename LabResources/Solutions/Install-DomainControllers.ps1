@@ -318,8 +318,117 @@ if ($computerName) {
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-#endregion Exercise 1: Deploy additional domain controllers
+#region Task 5: Configure forwarders
 
+Write-Host '        Task 5: Configure forwarders'
+
+if ($dcDeploymentSuccess) {
+    foreach ($computerName in @(
+        'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+    )) {
+        $psSession = Recycle-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.adatum
+
+        Write-Verbose `
+            "Waiting for DNS service to start on $computerName"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            $name = 'DNS'
+            Get-Service -Name $name |
+            Where-Object { $PSItem.Status -ne 'Running' } |
+            Start-Service
+        }
+
+        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
+            Get-DnsServerForwarder
+        }
+
+        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
+
+        # Add forwarders
+
+        $ipAddress = $desiredIPAddresses |
+            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
+        
+        if ($ipAddress) {
+            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
+
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Add-DnsServerForwarder -IPAddress $using:ipAddress
+            }
+        }
+        
+        # Remove obsolete forwarders
+
+        $ipAddress = $dnsServerForwarder.IPAddress | 
+            Where-Object { $PSItem -notin $desiredIPAddresses }
+
+        if ($ipAddress) {
+            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
+    
+            Invoke-Command -Session $psSession -ScriptBlock {
+                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
+            }    
+        }
+    }
+}
+else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 5: Configure forwarders
+
+#region Task 6: Configure DNS client settings
+
+Write-Host '        Task 6: Configure DNS client settings'
+
+if ($dcDeploymentSuccess) {
+    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
+    $psSession = Recycle-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+
+    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
+        (
+            Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
+        ).InterfaceIndex
+    }
+
+    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
+        Get-DnsClientServerAddress `
+            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
+    }
+
+    # Determine if DNS client server addresses need to be changed
+
+    $serverAddresses = (
+        $dnsClientServerAddress.ServerAddresses | 
+        Where-Object { $PSItem -notin $desiredServerAddresses }
+    ) -join (
+        $desiredServerAddress |
+        Where-Object { $PSItem -notin $dnsClientServerAddresses.ServerAddresses }
+    )
+
+    if ($serverAddresses) {
+        Write-Verbose `
+            "Set DNS client server addresses to $(
+                $desiredServerAddresses
+            ) on $(
+                $computerName
+            )"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            Set-DnsClientServerAddress `
+                -InterfaceIndex $using:interfaceIndex `
+                -ServerAddresses $using:desiredServerAddresses `
+        }
+    }
+} else {
+    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+}
+
+#endregion Task 6: Configure DNS client settings
+
+#endregion Exercise 1: Deploy additional domain controllers
 #region Exercise 2: Check domain controller health
 
 Write-Host '    Exercise 2: Check domain controller health'
@@ -432,122 +541,6 @@ else {
 
 #endregion Exercise 2: Check domain controller health
 
-#region Exercise 3: Optimize DNS
-
-Write-Host '    Exercise 3: Optimize DNS'
-
-#region Task 1: Configure forwarders
-
-Write-Host '        Task 1: Configure forwarders'
-
-if ($dcDeploymentSuccess) {
-    foreach ($computerName in @(
-        'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-    )) {
-        $psSession = Recycle-PSSession `
-            -ComputerName $computerName -Credential $adminCredential.adatum
-
-        Write-Verbose `
-            "Waiting for DNS service to start on $computerName"
-        Invoke-Command -Session $psSession -ScriptBlock {
-            $name = 'DNS'
-            Get-Service -Name $name |
-            Where-Object { $PSItem.Status -ne 'Running' } |
-            Start-Service
-        }
-
-        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
-            Get-DnsServerForwarder
-        }
-
-        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
-
-        # Add forwarders
-
-        $ipAddress = $desiredIPAddresses |
-            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
-        
-        if ($ipAddress) {
-            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
-
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Add-DnsServerForwarder -IPAddress $using:ipAddress
-            }
-        }
-        
-        # Remove obsolete forwarders
-
-        $ipAddress = $dnsServerForwarder.IPAddress | 
-            Where-Object { $PSItem -notin $desiredIPAddresses }
-
-        if ($ipAddress) {
-            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
-    
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
-            }    
-        }
-    }
-}
-else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 1: Configure forwarders
-
-#region Task 2: Configure DNS client settings
-
-Write-Host '        Task 2: Configure DNS client settings'
-
-if ($dcDeploymentSuccess) {
-    $computerName = 'VN1-SRV5.ad.adatum.com'
-    $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
-        (
-            Get-NetIPAddress -AddressFamily IPv4 |
-            Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
-        ).InterfaceIndex
-    }
-
-    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
-        Get-DnsClientServerAddress `
-            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
-    }
-
-    # Determine if DNS client server addresses need to be changed
-
-    $serverAddresses = (
-        $dnsClientServerAddress.ServerAddresses | 
-        Where-Object { $PSItem -notin $desiredServerAddresses }
-    ) -join (
-        $desiredServerAddress |
-        Where-Object { $PSItem -notin $dnsClientServerAddresses.ServerAddresses }
-    )
-
-    if ($serverAddresses) {
-        Write-Verbose `
-            "Set DNS client server addresses to $(
-                $desiredServerAddresses
-            ) on $(
-                $computerName
-            )"
-        Invoke-Command -Session $psSession -ScriptBlock {
-            Set-DnsClientServerAddress `
-                -InterfaceIndex $using:interfaceIndex `
-                -ServerAddresses $using:desiredServerAddresses `
-        }
-    }
-} else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 2: Configure DNS client settings
-
-#endregion Exercise 3: Optimize DNS
-
 #region Exercise 3: Transfer flexible single master operation roles
 
 Write-Host '    Exercise 3: Transfer flexible single master operation roles'
@@ -626,553 +619,7 @@ else {
   
 #endregion Exercise 3: Transfer flexible single master operation roles
 
-#region Exercise 4: Decommission a domain controller
-
-Write-Host '    Exercise 4: Decommission a domain controller'
-
-#region Task 1: Change the DNS client server addresses
-
-Write-Host '        Task 1: Change the DNS client server addresses'
-
-if ($dcDeploymentSuccess) {
-    $desiredServerAddresses = '10.1.1.40', '10.1.2.8'
-    $interfaceIndex = (
-        Get-DnsClientServerAddress -AddressFamily IPv4 |
-        Where-Object { $PSItem.ServerAddresses }
-    ).InterfaceIndex[0]
-
-    $dnsClientServerAddress = Get-DnsClientServerAddress `
-                -InterfaceIndex $interfaceIndex -AddressFamily IPv4 `
-
-    # Determine if DNS client server addresses need to be changed
-
-    $serverAddresses = (
-        $dnsClientServerAddress.ServerAddresses | 
-        Where-Object { $PSItem -notin $desiredServerAddresses }
-    ) -join (
-        $desiredServerAddresses |
-        Where-Object { $PSItem -notin $dnsClientServerAddress.ServerAddresses }
-    )
-
-    if ($serverAddresses) {
-        Write-Verbose "Set DNS client server addresses to $(
-            $desiredServerAddresses
-        ) on local computer"
-        Set-DnsClientServerAddress `
-            -InterfaceIndex $interfaceIndex `
-            -ServerAddresses $desiredServerAddresses `
-    }
-} else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 1: Change the DNS client server addresses
-
-#region Task 2: Change the IP address of the domain controller to decommission
-
-Write-Host '        Task 2: Change the IP address of the domain controller to decommission'
-
-
-if ($dcDeploymentSuccess) {
-    $computerName = 'VN1-SRV1.ad.adatum.com'
-    $newIPAddress = '10.1.1.9'
-    $oldIPAddress = '10.1.1.8'
-    
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName `
-        -Credential $adminCredential.adatum `
-        -ErrorAction SilentlyContinue
-
-    $addIPAddressSuccess = $false
-
-    if ($psSession) {
-        # Find netIPAddress on right subnet
-
-        $netIPAddress = Invoke-Command `
-            -Session $psSession -ErrorAction Stop -ScriptBlock {
-                Get-NetIPAddress |
-                Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
-            }
-
-        # Set DNS Client server addresses
-
-        $desiredServerAddresses = '10.1.1.40', '10.1.2.8'
-    
-        $dnsClientServerAddress = Invoke-Command `
-            -Session $psSession -ScriptBlock { 
-                Get-DnsClientServerAddress `
-                    -InterfaceIndex $using:netIPAddress[0].InterfaceIndex `
-                    -AddressFamily IPv4
-            }
-        
-        # Determine if DNS client server addresses need to be changed
-    
-        $serverAddresses = (
-            $dnsClientServerAddress.ServerAddresses | 
-            Where-Object { $PSItem -notin $desiredServerAddresses }
-        ) -join (
-            $desiredServerAddresses |
-            Where-Object { 
-                $PSItem -notin $dnsClientServerAddress.ServerAddresses 
-            }
-        )
-    
-        if ($serverAddresses) {
-            Write-Verbose "Set DNS client server addresses to $(
-                $desiredServerAddresses
-            ) on $(
-                $computerName
-            )"
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Set-DnsClientServerAddress `
-                    -InterfaceIndex $using:netIPAddress[0].InterfaceIndex `
-                    -ServerAddresses $using:desiredServerAddresses `
-            }
-        }
-
-        # Add new IP address
-
-        try {
-            $addIPAddressSuccess = $true
-    
-            # If new IP address is not added yet
-            if (
-                -not ($netIPAddress |
-                Where-Object { $PSItem.IPAddress -eq $newIPAddress })
-            ) {
-                Write-Verbose `
-                    "Add the IP address $(
-                        $newIPAddress
-                    ) with the prefix length of 24 to $(
-                        $computerName
-                    )."
-                $null = Invoke-Command `
-                    -Session $psSession -ErrorAction Stop -ScriptBlock {
-                        New-NetIPAddress `
-                            -InterfaceIndex `
-                                $using:netIPAddress[0].InterfaceIndex `
-                            -IPAddress $using:newIPAddress `
-                            -PrefixLength 24 `
-                    }
-            }
-            $psSession | Remove-PSSession
-        }
-        catch {
-            $addIPAddressSuccess = $false
-            Write-Error $Error[0]
-        }
-    
-    }
-    else {
-        Write-Warning `
-            "Could not connect to $computerName. Is it decommissioned already?"
-    }
-
-    
-    # Remove DNS A record
-
-    if ($addIPAddressSuccess) {
-
-        $zoneName = 'ad.adatum.com'
-        $name = 'VN1-SRV1'
-        while (
-            (
-                Resolve-DnsName `
-                    -Name "$name.$zoneName" `
-                    -Type A `
-                    -ErrorAction SilentlyContinue
-            ).IPAddress -ne '10.1.1.9'
-        ) {
-            $computerName = 'VN1-SRV5.ad.adatum.com'
-            $psSession = Recycle-PSSession `
-                -ComputerName $computerName -Credential $adminCredential.adatum
-    
-            $dnsServerResourceRecord = Invoke-Command `
-                -Session $psSession -ScriptBlock {
-                    Get-DnsServerResourceRecord `
-                        -ZoneName $using:zoneName `
-                        -RRType A `
-                        -Name $using:name `
-                        -ErrorAction SilentlyContinue |
-                    Where-Object { 
-                        $PSItem.RecordData.IPv4Address -eq $using:oldIPAddress 
-                    }
-                }
-    
-            if ($dnsServerResourceRecord) {
-                Write-Verbose `
-                    "Remove the A record $dnsServerResourceRecord from DNS."
-    
-                Invoke-Command -Session $psSession -ScriptBlock {
-                    $using:dnsServerResourceRecord | 
-                    Remove-DnsServerResourceRecord `
-                        -ZoneName $using:zoneName -Force
-                }
-            }                
-            
-            Write-Verbose 'Clear the DNS client cache.'
-            Clear-DnsClientCache
-        }
-    }
-
-    # Remove old IP address
-
-    $removeIPAddressSuccess = $false
-    $computerName = 'VN1-SRV1.ad.adatum.com'
-
-    # TODO: Resolve-DnsName : VN1-SRV1.ad.adatum.com : DNS name does not exist
-
-    if ( $addIPAddressSuccess -and `
-        (
-            Resolve-DnsName -Name $computerName -Type A
-        ).IPAddress -ne $oldIPAddress
-    ) {
-        $psSession | Remove-PSSession
-        $psSession = Recycle-PSSession `
-            -ComputerName $computerName `
-            -Credential $adminCredential.adatum `
-            -ErrorAction SilentlyContinue
-    
-        if ($psSession) {
-            try {
-                $netIPAddress = Invoke-Command `
-                    -Session $psSession -ErrorAction Stop -ScriptBlock {
-                        $using:netIPAddress |
-                        Where-Object { 
-                            $PSItem.IPAddress -eq $using:oldIPAddress 
-                        }
-                    }
-                $removeIPAddressSuccess = $true
-                if ($netIPAddress) {
-                    Write-Verbose `
-                        "Remove the IP address $(
-                            $oldIPAddress
-                        ) from $(
-                            $computerName
-                        )."
-
-                    Invoke-Command `
-                        -Session $psSession -ErrorAction Stop -ScriptBlock {
-                            $using:netIPAddress |
-                            Remove-NetIPAddress -Confirm: $false
-                        }
-                }            
-            }  
-            catch {
-                $removeIPAddressSuccess = $false
-                Write-Error $Error[0]
-            }
-        }
-        else {
-            Write-Warning `
-                "Could not connect to $(
-                    $computerName
-                ). Is it decommissioned already?"
-        }     
-    }
-}
-
-if (-not $dcDeploymentSuccess) {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 2: Change the IP address of the domain controller to decommission
-
-#region Task 3: Update the host record for the domain controller to decommission
-
-# Write-Host '        Task 3: Update the host record for the domain controller to decommission'
-
-# $computerName = 'VN1-SRV5.ad.adatum.com'
-# $zoneName = 'ad.adatum.com'
-
-# Write-Verbose 'Retrieve the old resource record'
-# $rRType = 'A'
-# $name = 'VN1-SRV1'
-
-# $oldDnsServerResourceRecord = Get-DnsServerResourceRecord `
-#     -ZoneName $zoneName `
-#     -RRType $rRType `
-#     -Name $name `
-#     -ComputerName $computerName
-
-# Write-Verbose 'Configure the new resource record'
-# $newDnsServerResourceRecord = `
-#     [ciminstance]::new($oldDnsServerResourceRecord)
-
-# $ipV4Address = '10.1.1.9' # The new IP address for the record
-# $newDnsServerResourceRecord.RecordData.IPv4Address = $iPv4Address
-
-# Write-Verbose 'Update the resource record'
-# Set-DnsServerResourceRecord `
-#     -ZoneName $zoneName `
-#     -OldInputObject $oldDnsServerResourceRecord `
-#     -NewInputObject $newDnsServerResourceRecord `
-#     -ComputerName $computerName
-
-#endregion Task 3: Update the host record for the domain controller to decommission
-
-#region Task 4: Add the IP address of the decommissioned domain controller to the new domain controller
-
-Write-Host '        Task 4: Add the IP address of the decommissioned domain controller to the new domain controller'
-
-$addIPAddressSuccess = $false
-$computerName = 'VN1-SRV5.ad.adatum.com'
-
-if ($removeIPAddressSuccess) {
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $addIPAddressSuccess = $true
-    Write-Verbose 'Find the IP addresses of subnet 10.1.1.0'
-    try {
-        $netIPAddress = Invoke-Command `
-            -Session $psSession -ErrorAction Stop -ScriptBlock {
-                Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-                    $PSItem.IPAddress -like '10.1.1.*' 
-                }
-            }
-
-        $ipAddress = '10.1.1.8'
-        if (-not (
-            $netIPAddress | Where-Object { $PSItem.IPAddress -eq $ipAddress }
-        )) {
-            Write-Verbose `
-                "Add the IP address $(
-                    $ipAddress
-                ) with the prefix length of 24 to the interface."
-            $null = Invoke-Command `
-                -Session $psSession -ErrorAction Stop -ScriptBlock {
-                    New-NetIPAddress `
-                        -InterfaceIndex $using:netIPAddress[0].InterfaceIndex `
-                        -IPAddress $using:ipAddress `
-                        -PrefixLength 24
-                }
-        }
-
-        $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-        Write-Verbose "Clear the DNS client cache on $computerName"
-        Invoke-Command `
-            -Session $psSession -ErrorAction Stop -ScriptBlock {
-                Clear-DnsClientCache
-            }
-    }
-    catch {
-        $addIPAddressSuccess = $false
-        Write-Error $Error[0]
-    }
-}
-else {
-    Write-Warning `
-        "Removal of $oldIPAddress from VN1-SRV1 failed, skipping task."
-}
-
-            
-#endregion Task 3: Add the IP address of the decommissioned domain controller to the new domain controller
-
-#region Task 5: Demote the old domain controller
-
-Write-Host '        Task 5: Demote the old domain controller'
-
-$uninstallDomainControllerSuccess = $false
-
-if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
-    $uninstallDomainControllerSuccess = $true
-    $psSession = Recycle-PSSession `
-        -ComputerName 'VN1-SRV5.ad.adatum.com' `
-        -Credential $adminCredential.adatum
-    if (
-        Invoke-Command -Session $psSession -ScriptBlock {
-                $securePassword = ConvertTo-SecureString `
-                    -String $using:defaultPassword -AsPlainText -Force
-                $credential = New-Object `
-                    -TypeName pscredential `
-                    -ArgumentList `
-                        $using:adminUsername.adatum, $securePassword
-                    Get-ADDomainController -Filter * -Credential $credential
-            } | 
-        Where-Object { $PSItem.Name -eq 'VN1-SRV1' }
-    ) {
-        $computerName = 'VN1-SRV1.ad.adatum.com'
-        Write-Verbose "Demote the domain controller $computerName"
-        $psSession = Recycle-PSSession `
-            -ComputerName $computerName `
-            -Credential $adminCredential.adatum `
-    
-        if ($psSession) {
-            try {
-                $job = Invoke-Command `
-                    -Session $psSession -AsJob -ErrorAction Stop -ScriptBlock {
-                        $localAdministratorPassword = ConvertTo-SecureString `
-                            -String 'Pa$$w0rd' -AsPlainText -Force
-                        Uninstall-ADDSDomainController `
-                            -LocalAdministratorPassword `
-                                $localAdministratorPassword `
-                            -Confirm:$false 
-                }
-                $null = $job | Wait-Job -ErrorAction Stop
-                $result = Receive-Job -Job $job
-                if ($result.Status -eq 'Error') {
-                    Write-Error $result.Message
-                    $uninstallDomainControllerSuccess = $false
-                }
-            }
-            catch {
-                $uninstallDomainControllerSuccess = $false
-                Write-Error $Error[0]
-            }
-        }
-        else {
-            Write-Warning `
-                "Could not connect to $(
-                    $computerName
-                ). Is it decommissioned already?"
-        }     
-    }
-}
-else {
-    Write-Warning "$oldIPAddress not added to VN1-SRV5 or domain controller deployment not successful, skipping task."
-}
-
-#endregion Task 4: Demote the old domain controller
-
-#region Task 6: Remove roles from the decommissioned domain controller
-
-Write-Host '        Task 6: Remove roles from the decommissioned domain controller'
-
-if ($uninstallDomainControllerSuccess) {
-    $computerName = 'VN1-SRV1.ad.adatum.com'
-    $name = 'AD-Domain-Services', 'DNS', 'FS-FileServer'
-
-    $endDate = (Get-Date).AddMinutes(10)
-
-    Write-Verbose "Waiting for $computerName to become available until $endDate"
-    Wait-WSMan `
-        -ComputerName $computerName `
-        -Authentication Default `
-        -Credential $adminCredential.adatum `
-        -Timeout 600
-
-    Start-Sleep -Seconds 60
-
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName `
-        -Credential $adminCredential.adatum `
-        -ErrorAction SilentlyContinue
-
-    if ($psSession) {
-        $windowsFeature = Invoke-Command `
-            -Session $psSession -ErrorAction Stop -ScriptBlock {
-                Get-WindowsFeature -Name $using:name |
-                Where-Object { $PSItem.Installed }
-            }
-
-        if ($windowsFeature) {
-            Write-Verbose `
-                "Uninstall the features $(
-                    $windowsFeature.Name
-                ) from $(
-                    $computerName
-                )."
-
-            try {
-                $null = Invoke-Command `
-                    -Session $psSession -ErrorAction Stop -ScriptBlock {
-                        $using:windowsFeature | Uninstall-WindowsFeature
-                    }
-    
-                Write-Verbose "Shut down $computerName."
-        
-                Stop-Computer `
-                    -ComputerName $computerName `
-                    -WsmanAuthentication Default `
-                    -Credential $adminCredential.local
-            }
-            catch {
-                Write-Error $Error[0]
-            }        
-        }
-    }
-    else {
-        Write-Warning `
-            "Could not connect to $computerName. Is it decommissioned already?"
-    }
-
-    $psSession | Remove-PSSession
-}
-else {
-    Write-Warning "VN1-SRV1 not demoted as DC, skipping task"
-}
-
-#endregion Task 5: Remove roles from the decommissioned domain controller
-
-#endregion Exercise 5: Decommission a domain controller
-
-#region Exercise 5: Raise the domain and forest functional level
-
-Write-Host '    Exercise 5: Raise the domain and forest functional level'
-
-#region Task 1: Raise the domain functional level
-
-Write-Host '        Task 1: Raise the domain functional level'
-
-if ($dcDeploymentSuccess) {
-    $domainMode = 'Windows2016Domain'
-    $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $aDDomain = Invoke-Command -Session $psSession -ScriptBlock { Get-ADDomain }
-    if ($aDDomain.DomainMode -ne $domainMode) {
-        Write-Verbose 'Set the domain mode to Windows Server 2016.'
-        Invoke-Command -Session $psSession -ScriptBlock {
-            Set-ADDomainMode `
-                -Identity ad.adatum.com `
-                -DomainMode $domainMode `
-                -Confirm:$false
-        }
-    }
-}
-else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-
-#endregion Task 1: Raise the domain functional level
-
-#region Task 2: Raise the forest functional level
-
-Write-Host '        Task 2: Raise the forest functional level'
-
-if ($dcDeploymentSuccess) {
-    $forestMode = 'Windows2016Forest'
-    $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-    $aDForest = Invoke-Command -Session $psSession -ScriptBlock { Get-ADForest }
-        if ($aDForest.ForestMode -ne $forestMode) {
-            Write-Verbose 'Set the forest mode to Windows Server 2016.'
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Set-ADForestMode `
-                    -Identity ad.adatum.com `
-                    -ForestMode $forestMode `
-                    -Confirm:$false
-            }
-        }
-}
-else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
-}
-
-#endregion Task 2: Raise the forest functional level
-
-#endregion Exercise 6: Raise the domain and forest functional level
-
-Get-PSSession | Remove-PSSession
-
-Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
-$endDate = Get-Date
-$timeElapsed = $endDate - $startDate
-Write-Verbose "Time elapsed: $timeElapsed"
+#region Exercise 4: Deploy a new forest
 
 # CL3 may need a restart at the end to complete domain join
 
@@ -1181,4 +628,14 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
     Read-Host 'Press ENTER to restart'
     Restart-Computer
 }
+
+#endregion Exercise 4:Deploy a new forest
+
+Get-PSSession | Remove-PSSession
+
+Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
+$endDate = Get-Date
+$timeElapsed = $endDate - $startDate
+Write-Verbose "Time elapsed: $timeElapsed"
+
 
