@@ -125,7 +125,7 @@ $trustedHosts = Get-Item -Path $trustedHostsPath
 Set-Item `
     -Path $trustedHostsPath `
     -Value `
-        '10.1.2.16, VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com, VN2-SRV2.ad.adatum.com, CL1.ad.adatum.com, CL3.ad.adatum.com' `
+        'VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com' `
     -Force
 
 #endregion Prerequisites
