@@ -29,7 +29,7 @@ $adminCredential = @{
 $startDate = Get-Date
 
 #region Helper functions
-function Recycle-PSSession {
+function Request-PSSession {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
@@ -38,8 +38,6 @@ function Recycle-PSSession {
         [pscredential]
         $Credential
     )
-
-    $parameters = $PSBoundParameters
 
     # Find existing sessions to the computers
 
@@ -191,7 +189,7 @@ Write-Host '        Task 3: Install Active Directory Domain Services'
 $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
 $name = 'AD-Domain-Services'
 
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -ComputerName $computerName -Credential $adminCredential.adatum
 
 $windowsFeature = Invoke-Command -Session $psSession -ScriptBlock { 
@@ -240,7 +238,7 @@ Write-Host '        Task 4: Configure Active Directory Domain Services as an add
 $dcDeploymentSuccess = $false
 
 $computerName = 'VN1-SRV5.ad.adatum.com'
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -ComputerName $computerName -Credential $adminCredential.adatum
 
 Write-Verbose 'Getting existing domain controller'
@@ -269,7 +267,7 @@ if ($computerName) {
                 ) as additional domain controller in $(
                     $domainName
                 )"
-            $psSession = Recycle-PSSession -ComputerName $PSItem `
+            $psSession = Request-PSSession -ComputerName $PSItem `
                 -Credential $adminCredential.adatum
             $result = Invoke-Command `
                 -Session $psSession `
@@ -327,7 +325,7 @@ if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
         'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
     )) {
-        $psSession = Recycle-PSSession `
+        $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
 
         Write-Verbose `
@@ -385,7 +383,7 @@ Write-Host '        Task 6: Configure DNS client settings'
 if ($dcDeploymentSuccess) {
     $computerName = 'VN1-SRV5.ad.adatum.com'
     $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
@@ -444,7 +442,7 @@ if ($dcDeploymentSuccess) {
     Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
     $endDate = (Get-Date).AddSeconds($timeout)
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose "Waiting for CNAME records until $endDate."
     while (
@@ -512,7 +510,7 @@ if ($dcDeploymentSuccess) {
     Write-Verbose 'Verify NETLOGON and SYSVOL Shares on VN1-SRV5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $name = 'NETLOGON', 'SYSVOL'
@@ -558,7 +556,7 @@ if ($dcDeploymentSuccess) {
     $identity = 'vn1-srv5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     
     Write-Verbose 'Get the properties of the AD domain.'
@@ -595,7 +593,7 @@ if ($dcDeploymentSuccess) {
     $identity = 'vn1-srv5'
 
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose 'Get the properties of the AD forest.'
     $aDForest = Invoke-Command -Session $psSession -ScriptBlock { Get-ADForest }
@@ -629,7 +627,7 @@ Write-Host '        Task 1: Install Active Directory Domain Services'
 $computerName = 'VN2-SRV2.ad.adatum.com'
 $name = 'AD-Domain-Services'
 
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -ComputerName $computerName -Credential $adminCredential.adatum
 
 $windowsFeature = Invoke-Command -Session $psSession -ScriptBlock { 
@@ -679,7 +677,7 @@ Write-Host `
 $dcDeploymentSuccess = $false
 
 $computerName = 'VN2-SRV2.ad.adatum.com'
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -ComputerName $computerName -Credential $adminCredential.local
 
 Write-Verbose 'Getting existing domain controller'
@@ -708,7 +706,7 @@ if ($computerName) {
                 ) on $(
                     $computerName
                 )"
-            $psSession = Recycle-PSSession -ComputerName $PSItem `
+            $psSession = Request-PSSession -ComputerName $PSItem `
                 -Credential $adminCredential.contoso
             $result = Invoke-Command `
                 -Session $psSession `
@@ -717,11 +715,6 @@ if ($computerName) {
                     $securePassword = ConvertTo-SecureString `
                         -String $using:defaultPassword -AsPlainText -Force
                     $safeModeAdministratorPassword = $securePassword
-                    $credential = New-Object `
-                        -TypeName pscredential `
-                        -ArgumentList `
-                            $using:adminUsername.contoso, $securePassword
-
                     Write-Verbose `
                         "Promoting $(
                             $env:hostname
@@ -769,7 +762,7 @@ if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
         'VN2-SRV2.ad.adatum.com'
     )) {
-        $psSession = Recycle-PSSession `
+        $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.contoso
 
         Write-Verbose `
@@ -827,7 +820,7 @@ Write-Host '        Task 4: Change the DNS client server addresses on CL3'
 if ($dcDeploymentSuccess) {
     $computerName = '3'
     $desiredServerAddresses = '10.1.2.16'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.local
 
     $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
@@ -882,7 +875,7 @@ if ($dcDeploymentSuccess) {
     $domainName = 'ad.contoso.com'
     $credential = $adminCredential.local
     $restart = $env:COMPUTERNAME -ne $computerName
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $credential
 
     Invoke-Command -Session $psSession -ScriptBlock {

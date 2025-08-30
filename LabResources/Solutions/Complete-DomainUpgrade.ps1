@@ -28,7 +28,7 @@ $adminCredential = @{
 $startDate = Get-Date
 
 #region Helper functions
-function Recycle-PSSession {
+function Request-PSSession {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
@@ -37,8 +37,6 @@ function Recycle-PSSession {
         [pscredential]
         $Credential
     )
-
-    $parameters = $PSBoundParameters
 
     # Find existing sessions to the computers
 
@@ -186,7 +184,7 @@ if ($dcDeploymentSuccess) {
     $newIPAddress = '10.1.1.9'
     $oldIPAddress = '10.1.1.8'
     
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName `
         -Credential $adminCredential.adatum `
         -ErrorAction SilentlyContinue
@@ -292,7 +290,7 @@ if ($dcDeploymentSuccess) {
             ).IPAddress -ne '10.1.1.9'
         ) {
             $computerName = 'VN1-SRV5.ad.adatum.com'
-            $psSession = Recycle-PSSession `
+            $psSession = Request-PSSession `
                 -ComputerName $computerName -Credential $adminCredential.adatum
     
             $dnsServerResourceRecord = Invoke-Command `
@@ -334,7 +332,7 @@ if ($dcDeploymentSuccess) {
         ).IPAddress -ne $oldIPAddress
     ) {
         $psSession | Remove-PSSession
-        $psSession = Recycle-PSSession `
+        $psSession = Request-PSSession `
             -ComputerName $computerName `
             -Credential $adminCredential.adatum `
             -ErrorAction SilentlyContinue
@@ -392,7 +390,7 @@ $addIPAddressSuccess = $false
 $computerName = 'VN1-SRV5.ad.adatum.com'
 
 if ($removeIPAddressSuccess) {
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $addIPAddressSuccess = $true
@@ -450,7 +448,7 @@ $uninstallDomainControllerSuccess = $false
 
 if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
     $uninstallDomainControllerSuccess = $true
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName 'VN1-SRV5.ad.adatum.com' `
         -Credential $adminCredential.adatum
     if (
@@ -467,7 +465,7 @@ if ($dcDeploymentSuccess -and $addIPAddressSuccess) {
     ) {
         $computerName = 'VN1-SRV1.ad.adatum.com'
         Write-Verbose "Demote the domain controller $computerName"
-        $psSession = Recycle-PSSession `
+        $psSession = Request-PSSession `
             -ComputerName $computerName `
             -Credential $adminCredential.adatum `
     
@@ -527,7 +525,7 @@ if ($uninstallDomainControllerSuccess) {
 
     Start-Sleep -Seconds 60
 
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName `
         -Credential $adminCredential.adatum `
         -ErrorAction SilentlyContinue
@@ -591,7 +589,7 @@ Write-Host '        Task 1: Raise the domain functional level'
 if ($dcDeploymentSuccess) {
     $domainMode = 'Windows2016Domain'
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
     $aDDomain = Invoke-Command -Session $psSession -ScriptBlock { Get-ADDomain }
@@ -619,7 +617,7 @@ Write-Host '        Task 2: Raise the forest functional level'
 if ($dcDeploymentSuccess) {
     $forestMode = 'Windows2016Forest'
     $computerName = 'VN1-SRV5.ad.adatum.com'
-    $psSession = Recycle-PSSession `
+    $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     $aDForest = Invoke-Command -Session $psSession -ScriptBlock { Get-ADForest }
         if ($aDForest.ForestMode -ne $forestMode) {
@@ -649,7 +647,7 @@ Write-Host '    Exercise 3: Enable database 32K pages'
 Write-Host `
     '        Task 1: Verify that the domain has a 32k page capable database'
 
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -Computername 'VN1-SRV5.ad.adatum.com' -Credential $adminCredential.adatum
 
 
@@ -671,7 +669,7 @@ Write-Host "$using:properties is $jetDBPageSize"
 
 Write-Host '        Task 2: Enable the Database 32K pages optional feature'
 
-$psSession = Recycle-PSSession `
+$psSession = Request-PSSession `
     -Computername 'VN1-SRV5.ad.adatum.com' -Credential $adminCredential.adatum
 
 if ($jetDBPageSize -eq 32768) {
