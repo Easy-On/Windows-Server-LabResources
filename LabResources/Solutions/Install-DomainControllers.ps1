@@ -332,7 +332,11 @@ if ($dcDeploymentSuccess) {
     
     Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
     $endDate = (Get-Date).AddSeconds($timeout)
-    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $computerName = @(
+        'VN1-SRV1.ad.adatum.com',
+        'VN1-SRV5.ad.adatum.com', 
+        'VN1-SRV2.ad.adatum.com'
+    )
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose "Waiting for CNAME records until $endDate."
@@ -351,7 +355,7 @@ if ($dcDeploymentSuccess) {
                         )
                     }
                 }
-        ).Count -lt 2 -and (Get-Date) -le $endDate
+        ).Count -lt 2 * 3 -and (Get-Date) -le $endDate
     ) {
         Start-Sleep -Seconds 5                
     }
@@ -379,7 +383,7 @@ if ($dcDeploymentSuccess) {
                             'vn2-srv1.ad.adatum.com.'
                     }
                 }
-        ).Count -lt 26 -and (Get-Date) -le $endDate
+        ).Count -lt 26 * 3 -and (Get-Date) -le $endDate
     ) {
         Start-Sleep -Seconds 5    
     }
@@ -625,6 +629,8 @@ else {
 #endregion Task 2: Transfer the forest-wide flexible single master operation roles
   
 #endregion Exercise 3: Transfer flexible single master operation roles
+
+<#
 
 #region Exercise 4: Deploy a new forest
 
@@ -911,6 +917,8 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
 #endregion Task 5: Join CL3 to the domain ad.contoso.com
 
 #endregion Exercise 4: Deploy a new forest
+
+#>
 
 Get-PSSession | Remove-PSSession
 
