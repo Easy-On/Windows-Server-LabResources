@@ -335,7 +335,7 @@ if ($dcDeploymentSuccess) {
     $computerName = @(
         'VN1-SRV1.ad.adatum.com',
         'VN1-SRV5.ad.adatum.com', 
-        'VN1-SRV2.ad.adatum.com'
+        'VN2-SRV1.ad.adatum.com'
     )
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
