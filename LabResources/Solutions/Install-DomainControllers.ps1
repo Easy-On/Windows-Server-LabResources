@@ -19,6 +19,9 @@ $adminCredential = @{
     adatum = New-Object `
         -TypeName pscredential `
         -ArgumentList $adminUsername.adatum, $defaultSecurePassword
+    contoso = New-Object `
+        -TypeName pscredential `
+        -ArgumentList $adminUsername.contoso, $defaultSecurePassword
     local = New-Object `
         -TypeName pscredential `
         -ArgumentList $adminUsername.local, $defaultSecurePassword
@@ -169,16 +172,27 @@ Write-Host '        Task 2: Disable network adapters'
 
 Write-Verbose `
     'Disabling all network interfaces not connected to the 10.1.1.0 subnet'
-$cimSession = New-CimSession -ComputerName 'VN1-SRV5'
-Get-NetIPAddress -CimSession $cimSession |
-Where-Object { 
-    $PSItem.IPAddress -notlike '10.1.1.*' `
-    -and $PSItem.PrefixOrigin -eq 'Manual' } |
-Select-Object -ExpandProperty InterfaceAlias -Unique |
-ForEach-Object {
-    Disable-NetAdapter -Name $PSItem -CimSession $cimSession -Confirm:$false
+$cimSession = $null
+if (
+    Get-NetIPAddress -AddressFamily IPv4 | 
+    Where-Object { $PSItem.IPAddress -like '10.1.1.*' } 
+)
+{
+    $cimSession = New-CimSession -ComputerName 'VN1-SRV5.ad.adatum.com'
+    Get-NetIPAddress -CimSession $cimSession |
+    Where-Object { 
+        $PSItem.IPAddress -notlike '10.1.1.*' `
+        -and $PSItem.PrefixOrigin -eq 'Manual' } |
+    Select-Object -ExpandProperty InterfaceAlias -Unique |
+    ForEach-Object {
+        Disable-NetAdapter -Name $PSItem -CimSession $cimSession -Confirm:$false
+    }
+    Remove-CimSession $cimSession
 }
-Remove-CimSession $cimSession
+else {
+    Write-Warning `
+        'Could not connect to VN1-SRV5.ad.adatum.com. Please run the script from a computer on the 10.0.1.0/24 subnet.'
+}
 
 #endregion Task 2: Disable network adapters
 
@@ -327,7 +341,13 @@ Write-Host '    Exercise 2: Check domain controller health'
     
 Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
-if ($dcDeploymentSuccess) {
+if (
+    $dcDeploymentSuccess `
+    -and (
+        Get-NetIPAddress -AddressFamily IPv4 | 
+        Where-Object { $PSItem.IPAddress -like '10.1.1.*' } 
+    )
+) {
     $timeout = 600 # timeout in seconds
     
     Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
@@ -339,58 +359,63 @@ if ($dcDeploymentSuccess) {
     )
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
-    Write-Verbose "Waiting for CNAME records until $endDate."
-    while (
-        (
-            Invoke-Command `
-                -Session $psSession -ScriptBlock {
-                    Get-DnsServerResourceRecord `
-                        -ZoneName _msdcs.ad.adatum.com `
-                        -RRType CName |
-                    Select-Object -ExpandProperty RecordData |
-                    Where-Object {
-                        $PSItem.HostNameAlias -in @(
-                            'VN1-SRV5.ad.adatum.com.'
-                            'VN2-SRV1.ad.adatum.com.'
-                        )
+    if ($psSession.Count -eq $computerName.Count) {
+        Write-Verbose "Waiting for CNAME records until $endDate."
+        while (
+            (
+                Invoke-Command `
+                    -Session $psSession -ScriptBlock {
+                        Get-DnsServerResourceRecord `
+                            -ZoneName _msdcs.ad.adatum.com `
+                            -RRType CName |
+                        Select-Object -ExpandProperty RecordData |
+                        Where-Object {
+                            $PSItem.HostNameAlias -in @(
+                                'VN1-SRV5.ad.adatum.com.'
+                                'VN2-SRV1.ad.adatum.com.'
+                            )
+                        }
                     }
-                }
-        ).Count -lt 2 * 3 -and (Get-Date) -le $endDate
-    ) {
-        Start-Sleep -Seconds 5                
-    }
+            ).Count -lt 2 * 3 -and (Get-Date) -le $endDate
+        ) {
+            Start-Sleep -Seconds 5                
+        }
 
-    if ((Get-Date) -gt $endDate) {
-        Write-Warning 'CNAME records missing.'
-        $dcDeploymentSuccess = $false
-    }
-    
-    Write-Verbose `
-        'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
-    $endDate = (Get-Date).AddSeconds($timeout)
-    Write-Verbose "Waiting for SRV records until $endDate."
-    while (
-        (
-            Invoke-Command `
-                -Session $psSession -ScriptBlock {
-                    Get-DnsServerResourceRecord `
-                        -ZoneName ad.adatum.com `
-                        -RRType SRV |
-                    Where-Object { 
-                        $PSItem.RecordData.DomainName -eq `
-                            'vn1-srv5.ad.adatum.com.' `
-                        -or $PSItem.RecordData.DomainName -eq `
-                            'vn2-srv1.ad.adatum.com.'
+        if ((Get-Date) -gt $endDate) {
+            Write-Warning 'CNAME records missing.'
+            $dcDeploymentSuccess = $false
+        }
+        
+        Write-Verbose `
+            'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
+        $endDate = (Get-Date).AddSeconds($timeout)
+        Write-Verbose "Waiting for SRV records until $endDate."
+        while (
+            (
+                Invoke-Command `
+                    -Session $psSession -ScriptBlock {
+                        Get-DnsServerResourceRecord `
+                            -ZoneName ad.adatum.com `
+                            -RRType SRV |
+                        Where-Object { 
+                            $PSItem.RecordData.DomainName -eq `
+                                'vn1-srv5.ad.adatum.com.' `
+                            -or $PSItem.RecordData.DomainName -eq `
+                                'vn2-srv1.ad.adatum.com.'
+                        }
                     }
-                }
-        ).Count -lt 26 * 3 -and (Get-Date) -le $endDate
-    ) {
-        Start-Sleep -Seconds 5    
+            ).Count -lt 26 * 3 -and (Get-Date) -le $endDate
+        ) {
+            Start-Sleep -Seconds 5    
+        }
+        
+        if ((Get-Date) -gt $endDate) {
+            Write-Warning 'SRV records missing.'
+            $dcDeploymentSuccess = $false
+        }
     }
-    
-    if ((Get-Date) -gt $endDate) {
-        Write-Warning 'SRV records missing.'
-        $dcDeploymentSuccess = $false
+    else {
+        Write-Warning 'DNS records verification failed.'
     }
 } else {
     Write-Warning 'Additional domain controllers not deployed, skipping task.'
@@ -798,7 +823,12 @@ if ($env:COMPUTERNAME -eq 'CL3') {
                     -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
             )
         ) {
-            Write-Verbose "Waiting $seconds seconds for domain $domainName to become available."
+            Write-Verbose `
+                "Waiting $(
+                    $seconds
+                ) seconds for domain $(
+                    $domainName
+                ) to become available."
             Start-Sleep -Seconds $seconds
         }
     
