@@ -705,6 +705,7 @@ Write-Host `
     '        Task 1: Install Active Directory Domain Services on VN2-SRV2'
 
 $computerName = '10.1.2.16' # VN2-SRV2
+$aDDSfeatureInstalled = $false
 $aDDSfeatureInstalled = Install-ADDSFeature `
     -ComputerName $computerName `
     -Credential $adminCredential.local
@@ -740,56 +741,62 @@ if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
 # Install new forest
 
 $dcDeploymentSuccess = $false
-if (-not (
-    Invoke-Command -Session $psSession -ScriptBlock {
-         Get-WmiObject `
+if (-not $aDDSfeatureInstalled) {
+    Write-Error `
+        "Active Directory Domain Services feature could not be installed on $(
+            $computerName
+        ). Skipping deployment of new forest."
+}
+if ($aDDSfeatureInstalled) {
+    $operatingSystemDC = Invoke-Command -Session $psSession -ScriptBlock {
+        Get-WmiObject `
             -Query 'SELECT * from Win32_OperatingSystem where ProductType="2"'
-    }
-)) {
-    $domainName = 'ad.contoso.com'
-    $domainNetbiosName = 'CONTOSO'
-
-    Write-Verbose `
-        'Store the Directory Services Restore Mode (DSRM) password in a variable.'
-
-    $safeModeAdministratorPassword = ConvertTo-SecureString `
-        -String $defaultPassword -AsPlainText -Force
-
-    if (-not $aDDSfeatureInstalled) {
-        Write-Error `
-            "Active Directory Domain Services feature could not be installed on $(
-                $computerName
-            ). Skipping deployment of new forest."
-    }
-    
-    $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
-        Install-ADDSForest `
-            -DomainName $using:domainName `
-            -DomainNetbiosName $using:domainNetbiosName `
-            -SafeModeAdministratorPassword `
-                $using:safeModeAdministratorPassword `
-            -InstallDns `
-            -Force
-    }
-
-    $job | Wait-Job
-    $jobResult = Receive-Job -Job $job
-
-    if ($jobResult -and $jobResult.Success) {
-        $dcDeploymentSuccess = $true
-    } else {
-        $dcDeploymentSuccess = $false
-        if ($jobResult) {
-            Write-Error $jobResult.Message
         }
+    if ($operatingSystemDC) {
+        Write-Verbose `
+            "Operating system on $(
+                $computerName
+            )is already configured as domain controller"
     }
+    if (-not $operatingSystemDC) {
+        $domainName = 'ad.contoso.com'
+        $domainNetbiosName = 'CONTOSO'
 
-    $psSession | Remove-PSSession
-    Wait-WSMan `
-        -ComputerName $computerName `
-        -Authentication Default `
-        -Credential $adminCredential.contoso `
-        -Timeout 600
+        Write-Verbose `
+            'Store the Directory Services Restore Mode (DSRM) password in a variable.'
+
+        $safeModeAdministratorPassword = ConvertTo-SecureString `
+            -String $defaultPassword -AsPlainText -Force
+
+        $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
+            Install-ADDSForest `
+                -DomainName $using:domainName `
+                -DomainNetbiosName $using:domainNetbiosName `
+                -SafeModeAdministratorPassword `
+                    $using:safeModeAdministratorPassword `
+                -InstallDns `
+                -Force
+        }
+
+        $job | Wait-Job
+        $jobResult = Receive-Job -Job $job
+
+        if ($jobResult -and $jobResult.Success) {
+            $dcDeploymentSuccess = $true
+        } else {
+            $dcDeploymentSuccess = $false
+            if ($jobResult) {
+                Write-Error $jobResult.Message
+            }
+        }
+
+        $psSession | Remove-PSSession
+        Wait-WSMan `
+            -ComputerName $computerName `
+            -Authentication Default `
+            -Credential $adminCredential.contoso `
+            -Timeout 600
+    }
 }
 
 #endregion Task 2: Configure Active Directory Domain Services as new forest
@@ -798,6 +805,12 @@ if (-not (
 
 Write-Host '        Task 3: Change the DNS client settings'
 
+if ($env:COMPUTERNAME -ne 'CL3') {
+    Write-Warning 'Skipped task. Please rerun the script on CL3.'
+}
+if (-not $dcDeploymentSuccess) {
+    Write-Error 'Skipped task. Deployment of new forest failed.'
+}
 if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     $desiredServerAddresses = '10.1.2.16'
     $interfaceIndex = (
@@ -827,9 +840,6 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
             -ServerAddresses $desiredServerAddresses `
     }
 }
-else {
-    Write-Warning 'Skipped task. Please rerun the script on CL3.'
-}
 
 #endregion Task 3: Change the DNS client settings
 
@@ -837,42 +847,69 @@ else {
 
 Write-Host '        Task 4: Connect to domain'
 
+if ($env:COMPUTERNAME -ne 'CL3') {
+    Write-Warning 'Skipped task. Please rerun the script on CL3.'
+}
+if (-not $dcDeploymentSuccess) {
+    Write-Error 'Skipped task. Deployment of new forest failed.'
+}
 $domainJoinSuccess = $false
 
 if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
-    $domainName = 'ad.contoso.com'
+    $interfaceIndex = (
+        Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
+    ).InterfaceIndex
 
-    if ((Get-ComputerInfo).CsDomain -ne $domainName) {
-        $seconds = 10
-        while (
-            -not (
-                Resolve-DnsName `
-                    -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
-            )
-        ) {
-            Write-Verbose `
-                "Waiting $(
-                    $seconds
-                ) seconds for domain $(
-                    $domainName
-                ) to become available."
-            Start-Sleep -Seconds $seconds
-        }
-    
-        Write-Verbose "Add the computer to the domain $domainName."
-        try {
-            Add-Computer `
-                -DomainName $domainName `
-                -Credential $adminCredential.contoso `
-                -ErrorAction Stop
-            $domainJoinSuccess = $true        
-        }
-        catch {
-            $domainJoinSuccess = $false
-            Write-Error $error[0]
-        }
+    $dnsClientServerAddress = Get-DnsClientServerAddress `
+        -InterfaceIndex $interfaceIndex -AddressFamily IPv4
+
+    $dnsClientServerAddressConfigured = $dnsClientServerAddress.Count -eq 1 `
+        -and $dnsClientServerAddress.ServerAddresses -contains '10.1.2.16'
+    if (-not $dnsClientServerAddressConfigured) {
+        Write-Error `
+            'DNS client server address is not configured correctly. Skipping domain join.'
     }
 
+    if ($dnsClientServerAddressConfigured) {
+        $domainName = 'ad.contoso.com'
+        $csDomain = (Get-ComputerInfo).CsDomain
+        if ($csDomain -eq $domainName) {
+            Write-Verbose "Computer is already a member of the domain $(
+                $domainName
+            )"
+        }
+        if ($csDomain -ne $domainName) {
+            $seconds = 10
+            while (
+                -not (
+                    Resolve-DnsName `
+                        -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
+                )
+            ) {
+                Write-Verbose `
+                    "Waiting $(
+                        $seconds
+                    ) seconds for domain $(
+                        $domainName
+                    ) to become available."
+                Start-Sleep -Seconds $seconds
+            }
+        
+            Write-Verbose "Add the computer to the domain $domainName."
+            try {
+                Add-Computer `
+                    -DomainName $domainName `
+                    -Credential $adminCredential.contoso `
+                    -ErrorAction Stop
+                $domainJoinSuccess = $true        
+            }
+            catch {
+                $domainJoinSuccess = $false
+                Write-Error $error[0]
+            }
+        }
+    }
 }
 else {
     Write-Warning 'Skipped task. Please rerun the script on CL3.'
