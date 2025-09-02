@@ -826,24 +826,12 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     $dnsClientServerAddress = Get-DnsClientServerAddress `
         -InterfaceIndex $interfaceIndex -AddressFamily IPv4
 
-    # Determine if DNS client server addresses need to be changed
+    Write-Verbose `
+        "Set DNS client server addresses to $desiredServerAddresses on CL3"
 
-    $serverAddresses = (
-        $dnsClientServerAddress.ServerAddresses | 
-        Where-Object { $PSItem -notin $desiredServerAddresses }
-    ) -join (
-        $desiredServerAddresses |
-        Where-Object { $PSItem -notin $dnsClientServerAddress.ServerAddresses }
-    )
-
-    if ($serverAddresses) {
-        Write-Verbose `
-            "Set DNS client server addresses to $desiredServerAddresses on CL3"
-
-        Set-DnsClientServerAddress `
-            -InterfaceIndex $interfaceIndex `
-            -ServerAddresses $desiredServerAddresses `
-    }
+    Set-DnsClientServerAddress `
+        -InterfaceIndex $interfaceIndex `
+        -ServerAddresses $desiredServerAddresses `
 }
 
 #endregion Task 3: Change the DNS client settings
