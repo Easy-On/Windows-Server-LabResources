@@ -119,7 +119,7 @@ function Install-ADDSFeature {
     [OutputType([bool])]
     param (
         [Parameter(Mandatory)]
-        [string]
+        [string[]]
         $ComputerName,
         [Parameter(Mandatory)]
         [pscredential]
@@ -297,28 +297,6 @@ $aDDSfeatureInstalled = Install-ADDSFeature `
 Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
 $dcDeploymentSuccess = $false
 
-$computerName = 'VN1-SRV5.ad.adatum.com'
-$psSession = Request-PSSession `
-    -ComputerName $computerName -Credential $adminCredential.adatum
-
-Write-Verbose 'Getting existing domain controller'
-$aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
-    $securePassword = ConvertTo-SecureString `
-        -String $using:defaultPassword -AsPlainText -Force
-    $credential = New-Object `
-        -TypeName pscredential `
-        -ArgumentList `
-            $using:adminUsername.adatum, $securePassword
-    Get-ADDomainController -Filter * -Credential $credential
-}
-
-$computerName = 'VN1-SRV5', 'VN2-SRV1'
-$computerName = $computerName | 
-    Where-Object { $PSItem -notin $aDDomainController.Name } | 
-    ForEach-Object { "$PSItem.ad.adatum.com" }
-$domainName = 'ad.adatum.com'
-
-$dcDeploymentSuccess = $false
 if (-not $computerName) {
     $dcDeploymentSuccess = $true
 }
@@ -331,6 +309,27 @@ if ($computerName) {
             'Installing Active Directory Domain Services feature failed. Skipping deployment of DCs.'
     }
     if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
+        $computerName = 'VN1-SRV5.ad.adatum.com'
+        $psSession = Request-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.adatum
+
+        Write-Verbose 'Getting existing domain controller'
+        $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
+            $securePassword = ConvertTo-SecureString `
+                -String $using:defaultPassword -AsPlainText -Force
+            $credential = New-Object `
+                -TypeName pscredential `
+                -ArgumentList `
+                    $using:adminUsername.adatum, $securePassword
+            Get-ADDomainController -Filter * -Credential $credential
+        }
+
+        $computerName = 'VN1-SRV5', 'VN2-SRV1'
+        $computerName = $computerName | 
+            Where-Object { $PSItem -notin $aDDomainController.Name } | 
+            ForEach-Object { "$PSItem.ad.adatum.com" }
+        $domainName = 'ad.adatum.com'
+
         $computerName | ForEach-Object {
             try {
                 Write-Verbose "Promoting $(
@@ -618,9 +617,9 @@ if ($dcDeploymentSuccess) {
 
 #endregion Exercise 3: Optimize DNS
 
-#region Exercise 3: Transfer flexible single master operation roles
+#region Exercise 4: Transfer flexible single master operation roles
 
-Write-Host '    Exercise 3: Transfer flexible single master operation roles'
+Write-Host '    Exercise 4: Transfer flexible single master operation roles'
 
 #region Task 1: Transfer the domain-wide flexible single master operation roles
 
@@ -694,9 +693,9 @@ else {
 
 #endregion Task 2: Transfer the forest-wide flexible single master operation roles
   
-#endregion Exercise 3: Transfer flexible single master operation roles
+#endregion Exercise 4: Transfer flexible single master operation roles
 
-#region Exercise 4: Deploy a new forest
+#region Exercise 5: Deploy a new forest
 
 Write-Host '    Exercise 4: Deploy a new forest'
 
