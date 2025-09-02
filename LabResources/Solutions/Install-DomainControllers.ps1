@@ -114,6 +114,88 @@ function Wait-WSMan {
     $null = Test-WSMan @parameters
 }
 
+function Install-ADDSFeature {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param (
+        [Parameter(Mandatory)]
+        [string]
+        $ComputerName,
+        [Parameter(Mandatory)]
+        [pscredential]
+        $Credential
+    )
+    
+    begin {
+        
+    }
+    
+    process {
+        $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+        $name = 'AD-Domain-Services'
+        
+        $psSession = Request-PSSession `
+            -ComputerName $computerName -Credential $Credential
+        
+        $windowsFeature = Invoke-Command `
+            -Session $psSession -ErrorAction Stop -ScriptBlock { 
+            Get-WindowsFeature -Name $using:name 
+        }
+        
+        $computerName = (
+                $windowsFeature | Where-Object { -not $PSItem.Installed }
+            ).PSComputerName
+        
+        $aDDSfeatureInstalled = $false
+        if (-not $computerName) {
+            $aDDSfeatureInstalled = $true
+        }
+        if ($computerName) {
+            try {
+                Write-Verbose `
+                    "Install the windows feature Active Directory Domain Services on $(
+                        $computerName
+                    )."
+                $featureOperationResult = Invoke-Command `
+                    -Session $psSession -ScriptBlock { `
+                        Install-WindowsFeature `
+                            -Name $using:name -IncludeManagementTools
+                    } `
+                    -ErrorAction Stop
+                
+                $computerName = (
+                    $featureOperationResult | 
+                    Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
+                ).PSComputerName
+            
+                if ($computerName) {
+                    Write-Verbose "Restart $computerName."
+                    $psSession | Remove-PSSession
+                    Restart-Computer `
+                        -ComputerName $computerName `
+                        -WsmanAuthentication Default `
+                        -Credential $adminCredential.adatum `
+                        -Wait -For WinRM `
+                        -TimeOut 600 `
+                        -Force `
+                        -ErrorAction Stop
+                }
+                $aDDSfeatureInstalled = $true
+            }
+            catch {
+                $aDDSfeatureInstalled = $false
+            }
+        }
+        
+        return $aDDSfeatureInstalled
+    }
+    
+    end {
+        
+    }
+}
+
+
 #endregion Helper functions
 
 #region Prerequisites
@@ -173,25 +255,29 @@ Write-Host '        Task 2: Disable network adapters'
 Write-Verbose `
     'Disabling all network interfaces not connected to the 10.1.1.0 subnet'
 $cimSession = $null
-if (
-    Get-NetIPAddress -AddressFamily IPv4 | 
-    Where-Object { $PSItem.IPAddress -like '10.1.1.*' } 
-)
-{
-    $cimSession = New-CimSession -ComputerName 'VN1-SRV5.ad.adatum.com'
-    Get-NetIPAddress -CimSession $cimSession |
+$networkAdaptersDisabled = $false
+$computerName = 'VN1-SRV5.ad.adatum.com'
+try {
+    $cimSession = New-CimSession -ComputerName $computerName -ErrorAction Stop
+    Get-NetIPAddress -CimSession $cimSession -ErrorAction Stop |
     Where-Object { 
         $PSItem.IPAddress -notlike '10.1.1.*' `
         -and $PSItem.PrefixOrigin -eq 'Manual' } |
     Select-Object -ExpandProperty InterfaceAlias -Unique |
     ForEach-Object {
-        Disable-NetAdapter -Name $PSItem -CimSession $cimSession -Confirm:$false
+        Disable-NetAdapter `
+            -Name $PSItem `
+            -CimSession $cimSession `
+            -Confirm:$false `
+            -ErrorAction Stop
     }
-    Remove-CimSession $cimSession
+    $networkAdaptersDisabled = $true
 }
-else {
-    Write-Warning `
-        'Could not connect to VN1-SRV5.ad.adatum.com. Please run the script from a computer on the 10.0.1.0/24 subnet.'
+catch {
+    $networkAdaptersDisabled = $false
+}
+finally {
+    $cimSession | Remove-CimSession
 }
 
 #endregion Task 2: Disable network adapters
@@ -200,49 +286,9 @@ else {
 
 Write-Host '        Task 3: Install Active Directory Domain Services'
 
-$computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-$name = 'AD-Domain-Services'
-
-$psSession = Request-PSSession `
-    -ComputerName $computerName -Credential $adminCredential.adatum
-
-$windowsFeature = Invoke-Command -Session $psSession -ScriptBlock { 
-    Get-WindowsFeature -Name $using:name 
-}
-
-$computerName = `
-    ($windowsFeature | Where-Object { -not $PSItem.Installed }).PSComputerName
-
-if ($computerName) {
-    Write-Verbose `
-        "Install the windows feature Active Directory Domain Services on $(
-            $computerName
-        )."
-    $featureOperationResult = Invoke-Command `
-        -Session $psSession -ScriptBlock { `
-            Install-WindowsFeature -Name $using:name -IncludeManagementTools
-        }
-    
-    $computerName = (
-        $featureOperationResult | 
-        Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
-    ).PSComputerName
-    
-    
-
-    if ($computerName) {
-        Write-Verbose "Restart $computerName."
-        $psSession | Remove-PSSession
-        Restart-Computer `
-            -ComputerName $computerName `
-            -WsmanAuthentication Default `
-            -Credential $adminCredential.adatum `
-            -Wait -For WinRM `
-            -TimeOut 600 `
-            -Force
-    }
-}
-
+$aDDSfeatureInstalled = Install-ADDSFeature `
+    -ComputerName 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com' `
+    -Credential $adminCredential.adatum
 
 #endregion Task 3: Install Active Directory Domain Services
 
@@ -272,60 +318,83 @@ $computerName = $computerName |
     ForEach-Object { "$PSItem.ad.adatum.com" }
 $domainName = 'ad.adatum.com'
 
-$dcDeploymentSuccess = $true
+$dcDeploymentSuccess = $false
+if (-not $computerName) {
+    $dcDeploymentSuccess = $true
+}
 if ($computerName) {
-    $computerName | ForEach-Object {
-        try {
-            Write-Verbose "Promoting $(
-                    $PSItem
-                ) as additional domain controller in $(
-                    $domainName
-                )"
-            $psSession = Request-PSSession -ComputerName $PSItem `
-                -Credential $adminCredential.adatum
-            $result = Invoke-Command `
-                -Session $psSession `
-                -ErrorAction Stop `
-                -ThrottleLimit 1 `
-                -ScriptBlock { `
-                    $securePassword = ConvertTo-SecureString `
-                        -String $using:defaultPassword -AsPlainText -Force
-                    $safeModeAdministratorPassword = $securePassword
-                    $credential = New-Object `
-                        -TypeName pscredential `
-                        -ArgumentList `
-                            $using:adminUsername.adatum, $securePassword
-
-                    Write-Verbose `
-                        "Promoting $(
-                            $env:hostname
-                        ) as additional domain controller."
-                    Install-ADDSDomainController `
-                        -DomainName $using:domainName `
-                        -Credential $credential `
-                        -SafeModeAdministratorPassword `
-                            $safeModeAdministratorPassword `
-                        -Force `
-                        -NoRebootOnCompletion
+    if (-not $networkAdaptersDisabled) {
+        Write-Error 'Disabling network adapters failed. Skipping deployment of DCs.'
+    }
+    if (-not $aDDSfeatureInstalled) {
+        Write-Error `
+            'Installing Active Directory Domain Services feature failed. Skipping deployment of DCs.'
+    }
+    if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
+        $computerName | ForEach-Object {
+            try {
+                Write-Verbose "Promoting $(
+                        $PSItem
+                    ) as additional domain controller in $(
+                        $domainName
+                    )"
+                $psSession = Request-PSSession -ComputerName $PSItem `
+                    -Credential $adminCredential.adatum -ErrorAction Stop
+                $result = Invoke-Command `
+                    -Session $psSession `
+                    -ErrorAction Stop `
+                    -ThrottleLimit 1 `
+                    -ScriptBlock { `
+                        $securePassword = ConvertTo-SecureString `
+                            -String $using:defaultPassword -AsPlainText -Force
+                        $safeModeAdministratorPassword = $securePassword
+                        $credential = New-Object `
+                            -TypeName pscredential `
+                            -ArgumentList `
+                                $using:adminUsername.adatum, $securePassword
+    
+                        Write-Verbose `
+                            "Promoting $(
+                                $env:hostname
+                            ) as additional domain controller."
+                        Install-ADDSDomainController `
+                            -DomainName $using:domainName `
+                            -Credential $credential `
+                            -SafeModeAdministratorPassword `
+                                $safeModeAdministratorPassword `
+                            -Force `
+                            -NoRebootOnCompletion
+                    }
+            }
+            catch {
+                $dcDeploymentSuccess = $false
+                Write-Error $Error[0]
+            }
+            finally {
+                if ($result -and $result.Success) {
+                    $dcDeploymentSuccess = $true
                 }
-        }
-        catch {
-            $dcDeploymentSuccess = $false
-            Write-Error $Error[0]
-        }
-        finally {
-            if ($result.RebootRequired) {
-                Write-Verbose "Restart $PSItem"
-                $psSession | Remove-PSSession
-                Restart-Computer `
-                    -ComputerName $PSItem `
-                    -WsmanAuthentication Default `
-                    -Credential $adminCredential.adatum `
-                    -Wait -For WinRM `
-                    -TimeOut 1200 `
-                    -Force
+                if (-not $result -or -not $result.Success) {
+                    $dcDeploymentSuccess = $false
+                    if ($result) {
+                        Write-Error $result.Message
+                    }
+                }   
+                if ($result.RebootRequired) {
+                    Write-Verbose "Restart $PSItem"
+                    $psSession | Remove-PSSession
+                    Restart-Computer `
+                        -ComputerName $PSItem `
+                        -WsmanAuthentication Default `
+                        -Credential $adminCredential.adatum `
+                        -Wait -For WinRM `
+                        -TimeOut 1200 `
+                        -Force
+                }
             }
         }
+    
+
     }
 }
 
@@ -382,7 +451,7 @@ if (
         }
 
         if ((Get-Date) -gt $endDate) {
-            Write-Warning 'CNAME records missing.'
+            Write-Error 'CNAME records missing.'
             $dcDeploymentSuccess = $false
         }
         
@@ -410,7 +479,7 @@ if (
         }
         
         if ((Get-Date) -gt $endDate) {
-            Write-Warning 'SRV records missing.'
+            Write-Error 'SRV records missing.'
             $dcDeploymentSuccess = $false
         }
     }
@@ -485,36 +554,8 @@ if ($dcDeploymentSuccess) {
             Start-Service
         }
 
-        $dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
-            Get-DnsServerForwarder
-        }
-
-        $desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
-
-        # Add forwarders
-
-        $ipAddress = $desiredIPAddresses |
-            Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
-        
-        if ($ipAddress) {
-            Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
-
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Add-DnsServerForwarder -IPAddress $using:ipAddress
-            }
-        }
-        
-        # Remove obsolete forwarders
-
-        $ipAddress = $dnsServerForwarder.IPAddress | 
-            Where-Object { $PSItem -notin $desiredIPAddresses }
-
-        if ($ipAddress) {
-            Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
-    
-            Invoke-Command -Session $psSession -ScriptBlock {
-                Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
-            }    
+        Invoke-Command -Session $psSession -ScriptBlock {
+            Set-DnsServerForwarder -IPAddress '8.8.8.8', '8.8.4.4'
         }
     }
 }
@@ -665,40 +706,9 @@ Write-Host `
     '        Task 1: Install Active Directory Domain Services on VN2-SRV2'
 
 $computerName = '10.1.2.16' # VN2-SRV2
-$psSession = Request-PSSession `
-    -ComputerName $computerName -Credential $adminCredential.local
-
-$name = 'AD-Domain-Services'
-$windowsFeature = Invoke-Command -Session $psSession -ScriptBlock {
-    Get-WindowsFeature -Name $using:name
-}
-
-$computerName = `
-    ($windowsFeature | Where-Object { -not $PSItem.Installed }).PSComputerName
-
-if ($computerName) {
-    Write-Verbose "Install the windows feature Active Directory Domain Services on $computerName."
-    $featureOperationResult = Invoke-Command -Session $psSession -ScriptBlock {
-        Install-WindowsFeature -Name $using:name -IncludeManagementTools
-    }
-    
-    $computerName = (
-        $featureOperationResult | 
-        Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
-    ).PSComputerName    
-    
-    if ($computerName) {
-        Write-Verbose "Restart $computerName."
-        $psSession | Remove-PSSession
-        Restart-Computer `
-            -ComputerName $computerName `
-            -WsmanAuthentication Default `
-            -Credential $adminCredential.local `
-            -Wait -For WinRM `
-            -TimeOut 600 `
-            -Force
-    }
-}
+$aDDSfeatureInstalled = Install-ADDSFeature `
+    -ComputerName $computerName `
+    -Credential $adminCredential.local
 
 #endregion Task 1: Install Active Directory Domain Services on VN2-SRV2
 
@@ -730,6 +740,7 @@ if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
 
 # Install new forest
 
+$dcDeploymentSuccess = $false
 if (-not (
     Invoke-Command -Session $psSession -ScriptBlock {
          Get-WmiObject `
@@ -739,12 +750,18 @@ if (-not (
     $domainName = 'ad.contoso.com'
     $domainNetbiosName = 'CONTOSO'
 
-    Write-Verbose 'Store the Directory Services Restore Mode (DSRM) password in a variable.'
+    Write-Verbose `
+        'Store the Directory Services Restore Mode (DSRM) password in a variable.'
 
     $safeModeAdministratorPassword = ConvertTo-SecureString `
         -String $defaultPassword -AsPlainText -Force
 
-    Write-Verbose "Install a new forest with the domain name $domainName and the NetBIOS name $domainNetbiosName"
+    if (-not $aDDSfeatureInstalled) {
+        Write-Error `
+            "Active Directory Domain Services feature could not be installed on $(
+                $computerName
+            ). Skipping deployment of new forest."
+    }
     
     $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
         Install-ADDSForest `
@@ -756,7 +773,18 @@ if (-not (
             -Force
     }
 
-    $null = $job | Wait-Job
+    $job | Wait-Job
+    $jobResult = Receive-Job -Job $job
+
+    if ($jobResult -and $jobResult.Success) {
+        $dcDeploymentSuccess = $true
+    } else {
+        $dcDeploymentSuccess = $false
+        if ($jobResult) {
+            Write-Error $jobResult.Message
+        }
+    }
+
     $psSession | Remove-PSSession
     Wait-WSMan `
         -ComputerName $computerName `
@@ -771,7 +799,7 @@ if (-not (
 
 Write-Host '        Task 3: Change the DNS client settings'
 
-if ($env:COMPUTERNAME -eq 'CL3') {
+if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     $desiredServerAddresses = '10.1.2.16'
     $interfaceIndex = (
         Get-NetIPAddress -AddressFamily IPv4 |
@@ -812,7 +840,7 @@ Write-Host '        Task 4: Connect to domain'
 
 $domainJoinSuccess = $false
 
-if ($env:COMPUTERNAME -eq 'CL3') {
+if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     $domainName = 'ad.contoso.com'
 
     if ((Get-ComputerInfo).CsDomain -ne $domainName) {
@@ -858,49 +886,23 @@ else {
 
 Write-Host '        Task 5: Configure forwarders'
 
-$psSession = Request-PSSession `
-    -ComputerName $computerName -Credential $adminCredential.contoso
+if ($dcDeploymentSuccess) {
+    $psSession = Request-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.contoso
 
-Write-Verbose `
-    "Waiting for DNS service to start on $computerName"
-
-Invoke-Command -Session $psSession -ScriptBlock {
-    $name = 'DNS'
-    if ((Get-Service -Name $name) -ne 'Running') {
-        Start-Service -Name $name
-    }
-}
-
-$dnsServerForwarder = Invoke-Command -Session $psSession -ScriptBlock {
-    Get-DnsServerForwarder
-}
-
-$desiredIPAddresses = @('8.8.8.8', '8.8.4.4')
-
-# Add forwarders
-
-$ipAddress = $desiredIPAddresses |
-    Where-Object { $PSItem -notin $dnsServerForwarder.IPAddress }
-
-if ($ipAddress) {
-    Write-Verbose "Add DNS forwarders $ipAddress on $computerName"
+    Write-Verbose `
+        "Waiting for DNS service to start on $computerName"
 
     Invoke-Command -Session $psSession -ScriptBlock {
-        Add-DnsServerForwarder -IPAddress $using:ipAddress
+        $name = 'DNS'
+        if ((Get-Service -Name $name) -ne 'Running') {
+            Start-Service -Name $name
+        }
     }
-}
-
-# Remove obsolete forwarders
-
-$ipAddress = $dnsServerForwarder.IPAddress | 
-    Where-Object { $PSItem -notin $desiredIPAddresses }
-
-if ($ipAddress) {
-    Write-Verbose "Remove DNS forwarders $ipAddress on $computerName"
 
     Invoke-Command -Session $psSession -ScriptBlock {
-        Remove-DnsServerForwarder -IPAddress $using:ipAddress -Force
-    }    
+        Set-DnsServerForwarder -IPAddress '8.8.8.8', '8.8.4.4'
+    }
 }
 
 #endregion Task 5: Configure forwarders
