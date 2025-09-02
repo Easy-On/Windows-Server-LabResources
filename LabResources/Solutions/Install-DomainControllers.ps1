@@ -315,11 +315,20 @@ if ($computerName) {
             Get-ADDomainController -Filter * -Credential $credential
         }
 
+        # Build a list of domain controller to be deployed
         $computerName = 'VN1-SRV5', 'VN2-SRV1'
         $computerName = $computerName | 
             Where-Object { $PSItem -notin $aDDomainController.Name } | 
             ForEach-Object { "$PSItem.ad.adatum.com" }
         $domainName = 'ad.adatum.com'
+
+        <# 
+            If we got domain controllers and VN1-SRV5 and VN2-SRV1 are in the
+            list, we can mark the deployment as successfull.
+        #>
+        if ($aDDomainController -and -not $computerName) {
+            $dcDeploymentSuccess = $true
+        }
 
         $computerName | ForEach-Object {
             try {
