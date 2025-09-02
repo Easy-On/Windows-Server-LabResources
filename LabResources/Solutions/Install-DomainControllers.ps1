@@ -126,16 +126,14 @@ function Install-ADDSFeature {
         $Credential
     )
     
-    begin {
-        
-    }
+    $aDDSfeatureInstalled = $false
+    $name = 'AD-Domain-Services'
     
-    process {
-        $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
-        $name = 'AD-Domain-Services'
-        
+    try {
         $psSession = Request-PSSession `
-            -ComputerName $computerName -Credential $Credential
+            -ComputerName $ComputerName `
+            -Credential $Credential `
+            -ErrorAction Stop
         
         $windowsFeature = Invoke-Command `
             -Session $psSession -ErrorAction Stop -ScriptBlock { 
@@ -146,55 +144,48 @@ function Install-ADDSFeature {
                 $windowsFeature | Where-Object { -not $PSItem.Installed }
             ).PSComputerName
         
-        $aDDSfeatureInstalled = $false
         if (-not $computerName) {
             $aDDSfeatureInstalled = $true
         }
         if ($computerName) {
-            try {
-                Write-Verbose `
-                    "Install the windows feature Active Directory Domain Services on $(
-                        $computerName
-                    )."
-                $featureOperationResult = Invoke-Command `
-                    -Session $psSession -ScriptBlock { `
-                        Install-WindowsFeature `
-                            -Name $using:name -IncludeManagementTools
-                    } `
-                    -ErrorAction Stop
-                
-                $computerName = (
-                    $featureOperationResult | 
-                    Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
-                ).PSComputerName
+            Write-Verbose `
+                "Install the windows feature Active Directory Domain Services on $(
+                    $computerName
+                )."
+            $featureOperationResult = Invoke-Command `
+                -Session $psSession -ScriptBlock { `
+                    Install-WindowsFeature `
+                        -Name $using:name -IncludeManagementTools
+                } `
+                -ErrorAction Stop
             
-                if ($computerName) {
-                    Write-Verbose "Restart $computerName."
-                    $psSession | Remove-PSSession
-                    Restart-Computer `
-                        -ComputerName $computerName `
-                        -WsmanAuthentication Default `
-                        -Credential $adminCredential.adatum `
-                        -Wait -For WinRM `
-                        -TimeOut 600 `
-                        -Force `
-                        -ErrorAction Stop
-                }
-                $aDDSfeatureInstalled = $true
-            }
-            catch {
-                $aDDSfeatureInstalled = $false
-            }
-        }
+            $computerName = (
+                $featureOperationResult | 
+                Where-Object { $PSItem.RestartNeeded -eq 'Yes' }
+            ).PSComputerName
         
-        return $aDDSfeatureInstalled
+            if ($computerName) {
+                Write-Verbose "Restart $computerName."
+                $psSession | Remove-PSSession
+                Restart-Computer `
+                    -ComputerName $computerName `
+                    -WsmanAuthentication Default `
+                    -Credential $adminCredential.adatum `
+                    -Wait -For WinRM `
+                    -TimeOut 600 `
+                    -Force `
+                    -ErrorAction Stop
+            }
+            $aDDSfeatureInstalled = $true
+        }                
     }
-    
-    end {
-        
+    catch {
+        $aDDSfeatureInstalled = $false
+        Write-Error $Error[0]
     }
-}
 
+    return $aDDSfeatureInstalled
+}
 
 #endregion Helper functions
 
@@ -370,10 +361,13 @@ if ($computerName) {
                 Write-Error $Error[0]
             }
             finally {
-                if ($result -and $result.Success) {
+                if ($result -and ($result.Success)) {
                     $dcDeploymentSuccess = $true
                 }
-                if (-not $result -or -not $result.Success) {
+                if (
+                    -not $result `
+                    -or -not ($result.Success -or $result.RebootRequired) 
+                ){
                     $dcDeploymentSuccess = $false
                     if ($result) {
                         Write-Error $result.Message
@@ -389,6 +383,7 @@ if ($computerName) {
                         -Wait -For WinRM `
                         -TimeOut 1200 `
                         -Force
+                    $dcDeploymentSuccess = $true
                 }
             }
         }
