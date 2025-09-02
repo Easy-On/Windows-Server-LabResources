@@ -760,7 +760,8 @@ if ($aDDSfeatureInstalled) {
         Write-Verbose `
             "Operating system on $(
                 $computerName
-            )is already configured as domain controller"
+            ) is already configured as domain controller."
+        $dcDeploymentSuccess = $true
     }
     if (-not $operatingSystemDC) {
         $domainName = 'ad.contoso.com'
@@ -914,9 +915,6 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
             }
         }
     }
-}
-else {
-    Write-Warning 'Skipped task. Please rerun the script on CL3.'
 }
 
 #endregion Task 4: Connect to domain
