@@ -857,7 +857,8 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     $dnsClientServerAddress = Get-DnsClientServerAddress `
         -InterfaceIndex $interfaceIndex -AddressFamily IPv4
 
-    $dnsClientServerAddressConfigured = $dnsClientServerAddress.Count -eq 1 `
+    $dnsClientServerAddressConfigured = `
+        $dnsClientServerAddress.ServerAddresses.Count -eq 1 `
         -and $dnsClientServerAddress.ServerAddresses -contains '10.1.2.16'
     if (-not $dnsClientServerAddressConfigured) {
         Write-Error `
