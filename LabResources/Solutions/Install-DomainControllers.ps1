@@ -288,9 +288,6 @@ $aDDSfeatureInstalled = Install-ADDSFeature `
 Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
 $dcDeploymentSuccess = $false
 
-if (-not $computerName) {
-    $dcDeploymentSuccess = $true
-}
 if ($computerName) {
     if (-not $networkAdaptersDisabled) {
         Write-Error 'Disabling network adapters failed. Skipping deployment of DCs.'
@@ -300,6 +297,9 @@ if ($computerName) {
             'Installing Active Directory Domain Services feature failed. Skipping deployment of DCs.'
     }
     if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
+
+        #region Retrieve the list of current domain controllers
+
         $computerName = 'VN1-SRV5.ad.adatum.com'
         $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
@@ -314,6 +314,8 @@ if ($computerName) {
                     $using:adminUsername.adatum, $securePassword
             Get-ADDomainController -Filter * -Credential $credential
         }
+
+        #endregion Retrieve the list of current domain controllers
 
         # Build a list of domain controller to be deployed
         $computerName = 'VN1-SRV5', 'VN2-SRV1'
@@ -339,10 +341,10 @@ if ($computerName) {
                     )"
                 $psSession = Request-PSSession -ComputerName $PSItem `
                     -Credential $adminCredential.adatum -ErrorAction Stop
-                $result = Invoke-Command `
+                $job = Invoke-Command `
                     -Session $psSession `
                     -ErrorAction Stop `
-                    -ThrottleLimit 1 `
+                    -AsJob `
                     -ScriptBlock { `
                         $securePassword = ConvertTo-SecureString `
                             -String $using:defaultPassword -AsPlainText -Force
@@ -362,46 +364,39 @@ if ($computerName) {
                             -SafeModeAdministratorPassword `
                                 $safeModeAdministratorPassword `
                             -Force `
-                            -NoRebootOnCompletion
+                            -ErrorAction Stop
                     }
-                if ($result.RebootRequired) {
-                    Write-Verbose "Restart $PSItem"
-                    $psSession | Remove-PSSession
-                    Restart-Computer `
-                        -ComputerName $PSItem `
-                        -WsmanAuthentication Default `
-                        -Credential $adminCredential.adatum `
-                        -Wait `
-                        -For WinRM `
-                        -TimeOut 1200 `
-                        -ErrorAction Stop `
-                        -Force
-                    $dcDeploymentSuccess = $true
-                }
+                $job | Wait-Job
+                $jobResult = $job | Receive-Job
             }
             catch {
                 $dcDeploymentSuccess = $false
                 Write-Error $Error[0]
             }
             finally {
-                if ($result -and ($result.Status -eq 'Success')) {
+                if ($jobResult -and ($jobResult.Status -eq 'Success')) {
                     $dcDeploymentSuccess = $true
                 }
-                if (-not $result -or -not ($result.Status -eq 'Success')){
+                if (-not $jobResult -or -not ($jobResult.Status -eq 'Success')){
                     $dcDeploymentSuccess = $false
-                    if ($result) {
+                    if ($jobResult) {
                         Write-Error `
                             "Deployment of $(
                                 $PSItem
                             ) failed with error: $(
-                                $result.Message
+                                $jobResult.Message
                             )"
                     }
                 }   
             }
+            $psSession | Remove-PSSession
+            Wait-WSMan `
+                -ComputerName $PSItem `
+                -Authentication Default `
+                -Credential $adminCredential.adatum `
+                -ErrorAction Stop `
+                -Timeout 600
         }
-    
-
     }
 }
 
