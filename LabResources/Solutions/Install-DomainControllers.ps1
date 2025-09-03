@@ -427,8 +427,7 @@ if ($dcDeploymentSuccess ) {
     foreach ($dnsServer in $dnsServers) {
         foreach ($srvName in $srvNames) {
             Do {
-                $dCsWithMissingSRVRecords = `
-                $domainControllers -notin (
+                $nameTargets = `
                     Resolve-DnsName `
                         -Name $srvName `
                         -Type SRV `
@@ -436,16 +435,8 @@ if ($dcDeploymentSuccess ) {
                         -ErrorAction SilentlyContinue |
                     Where-Object { $PSItem.NameTarget -in $domainControllers } |
                     Select-Object -ExpandProperty NameTarget
-                )
-                Write-Verbose "SRV Record $(
-                        $srvName
-                    ) for $(
-                        $dCsWithMissingSRVRecords
-                    ) missing on $(
-                        $dnsServer
-                    ). Waiting for it until $(
-                        $endDate
-                    )"
+                $dCsWithMissingSRVRecords = $domainControllers |
+                    Where-Object { $PSItem -notin $nameTargets }
             } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
             $dcDeploymentSuccess = $dcDeploymentSuccess `
                 -and -not $dCsWithMissingSRVRecords
