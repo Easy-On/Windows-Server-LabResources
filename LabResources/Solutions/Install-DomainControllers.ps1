@@ -370,16 +370,18 @@ if ($computerName) {
                 Write-Error $Error[0]
             }
             finally {
-                if ($result -and ($result.Success)) {
+                if ($result -and ($result.Status -eq 'Success')) {
                     $dcDeploymentSuccess = $true
                 }
-                if (
-                    -not $result `
-                    -or -not ($result.Success -or $result.RebootRequired) 
-                ){
+                if (-not $result -or -not ($result.Status -eq 'Success')){
                     $dcDeploymentSuccess = $false
                     if ($result) {
-                        Write-Error $result.Message
+                        Write-Error `
+                            "Deployment of $(
+                                $PSItem
+                            ) failed with error: $(
+                                $result.Message
+                            )"
                     }
                 }   
                 if ($result.RebootRequired) {
@@ -786,7 +788,7 @@ if ($aDDSfeatureInstalled) {
         $job | Wait-Job
         $jobResult = Receive-Job -Job $job
 
-        if ($jobResult -and $jobResult.Success) {
+        if ($jobResult -and $jobResult.Status -eq 'Success') {
             $dcDeploymentSuccess = $true
         } else {
             $dcDeploymentSuccess = $false
