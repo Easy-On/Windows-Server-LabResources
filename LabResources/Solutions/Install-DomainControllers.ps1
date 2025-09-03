@@ -389,7 +389,7 @@ if ($computerName) {
                 }   
             }
             $psSession | Remove-PSSession
-+        }
+        }
     }
 }
 
