@@ -405,84 +405,52 @@ Write-Host '    Exercise 2: Check domain controller health'
     
 Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
-if (
-    $dcDeploymentSuccess `
-    -and (
-        Get-NetIPAddress -AddressFamily IPv4 | 
-        Where-Object { $PSItem.IPAddress -like '10.1.1.*' } 
-    )
-) {
+if ($dcDeploymentSuccess ) {
     $timeout = 600 # timeout in seconds
     
-    Write-Verbose 'Verify CNAME records _msdcs.ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1'
+    Write-Verbose `
+        'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
     $endDate = (Get-Date).AddSeconds($timeout)
-    $computerName = @(
-        'VN1-SRV1.ad.adatum.com',
-        'VN1-SRV5.ad.adatum.com', 
-        'VN2-SRV1.ad.adatum.com'
+    $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
+    $domainControllers = 'vn1-srv5.ad.adatum.com', 'vn2-srv1.ad.adatum.com'
+    $srvNames = @(
+        '_ldap._tcp.ad.adatum.com', 
+        '_kerberos._tcp.ad.adatum.com',
+        '_gc._tcp.ad.adatum.com',
+        '_kpasswd._tcp.ad.adatum.com',
+        '_kerberos._udp.ad.adatum.com',
+        '_kpasswd._udp.ad.adatum.com',
+        '_ldap._tcp.dc._msdcs.ad.adatum.com',
+        '_kerberos._tcp.dc._msdcs.ad.adatum.com',
+        '_ldap._tcp.gc._msdcs.ad.adatum.com'
     )
-    $psSession = Request-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-    if ($psSession.Count -eq $computerName.Count) {
-        Write-Verbose "Waiting for CNAME records until $endDate."
-        while (
-            (
-                Invoke-Command `
-                    -Session $psSession -ScriptBlock {
-                        Get-DnsServerResourceRecord `
-                            -ZoneName _msdcs.ad.adatum.com `
-                            -RRType CName |
-                        Select-Object -ExpandProperty RecordData |
-                        Where-Object {
-                            $PSItem.HostNameAlias -in @(
-                                'VN1-SRV5.ad.adatum.com.'
-                                'VN2-SRV1.ad.adatum.com.'
-                            )
-                        }
-                    }
-            ).Count -lt 2 * 3 -and (Get-Date) -le $endDate
-        ) {
-            Start-Sleep -Seconds 5                
-        }
-
-        if ((Get-Date) -gt $endDate) {
-            Write-Error 'CNAME records missing.'
-            $dcDeploymentSuccess = $false
-        }
-        
-        Write-Verbose `
-            'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
-        $endDate = (Get-Date).AddSeconds($timeout)
-        Write-Verbose "Waiting for SRV records until $endDate."
-        while (
-            (
-                Invoke-Command `
-                    -Session $psSession -ScriptBlock {
-                        Get-DnsServerResourceRecord `
-                            -ZoneName ad.adatum.com `
-                            -RRType SRV |
-                        Where-Object { 
-                            $PSItem.RecordData.DomainName -eq `
-                                'vn1-srv5.ad.adatum.com.' `
-                            -or $PSItem.RecordData.DomainName -eq `
-                                'vn2-srv1.ad.adatum.com.'
-                        }
-                    }
-            ).Count -lt 26 * 3 -and (Get-Date) -le $endDate
-        ) {
-            Start-Sleep -Seconds 5    
-        }
-        
-        if ((Get-Date) -gt $endDate) {
-            Write-Error 'SRV records missing.'
-            $dcDeploymentSuccess = $false
+    foreach ($dnsServer in $dnsServers) {
+        foreach ($srvName in $srvNames) {
+            Do {
+                $dCsWithMissingSRVRecords = `
+                $domainControllers -notin (
+                    Resolve-DnsName `
+                        -Name $srvName `
+                        -Type SRV `
+                        -Server $dnsServer `
+                        -ErrorAction SilentlyContinue |
+                    Where-Object { $PSItem.NameTarget -in $domainControllers } |
+                    Select-Object -ExpandProperty NameTarget
+                )
+                Write-Verbose "SRV Record $(
+                        $srvName
+                    ) for $(
+                        $dCsWithMissingSRVRecords
+                    ) missing on $(
+                        $dnsServer
+                    ). Waiting for it until $(
+                        $endDate
+                    )"
+            } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
+            $dcDeploymentSuccess = $dcDeploymentSuccess `
+                -and -not $dCsWithMissingSRVRecords
         }
     }
-    else {
-        Write-Warning 'DNS records verification failed.'
-    }
-} else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
 }
     
 #endregion Task 1: Verify DNS entries for Active Directory
