@@ -364,6 +364,20 @@ if ($computerName) {
                             -Force `
                             -NoRebootOnCompletion
                     }
+                if ($result.RebootRequired) {
+                    Write-Verbose "Restart $PSItem"
+                    $psSession | Remove-PSSession
+                    Restart-Computer `
+                        -ComputerName $PSItem `
+                        -WsmanAuthentication Default `
+                        -Credential $adminCredential.adatum `
+                        -Wait `
+                        -For WinRM `
+                        -TimeOut 1200 `
+                        -ErrorAction Stop `
+                        -Force
+                    $dcDeploymentSuccess = $true
+                }
             }
             catch {
                 $dcDeploymentSuccess = $false
@@ -384,18 +398,6 @@ if ($computerName) {
                             )"
                     }
                 }   
-                if ($result.RebootRequired) {
-                    Write-Verbose "Restart $PSItem"
-                    $psSession | Remove-PSSession
-                    Restart-Computer `
-                        -ComputerName $PSItem `
-                        -WsmanAuthentication Default `
-                        -Credential $adminCredential.adatum `
-                        -Wait -For WinRM `
-                        -TimeOut 1200 `
-                        -Force
-                    $dcDeploymentSuccess = $true
-                }
             }
         }
     
@@ -775,34 +777,41 @@ if ($aDDSfeatureInstalled) {
         $safeModeAdministratorPassword = ConvertTo-SecureString `
             -String $defaultPassword -AsPlainText -Force
 
-        $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
-            Install-ADDSForest `
-                -DomainName $using:domainName `
-                -DomainNetbiosName $using:domainNetbiosName `
-                -SafeModeAdministratorPassword `
-                    $using:safeModeAdministratorPassword `
-                -InstallDns `
-                -Force
-        }
-
-        $job | Wait-Job
-        $jobResult = Receive-Job -Job $job
-
-        if ($jobResult -and $jobResult.Status -eq 'Success') {
-            $dcDeploymentSuccess = $true
-        } else {
-            $dcDeploymentSuccess = $false
-            if ($jobResult) {
-                Write-Error $jobResult.Message
+        try {
+            $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
+                Install-ADDSForest `
+                    -DomainName $using:domainName `
+                    -DomainNetbiosName $using:domainNetbiosName `
+                    -SafeModeAdministratorPassword `
+                        $using:safeModeAdministratorPassword `
+                    -InstallDns `
+                    -Force
             }
+    
+            $job | Wait-Job
+            $jobResult = Receive-Job -Job $job
+    
+            if ($jobResult -and $jobResult.Status -eq 'Success') {
+                $dcDeploymentSuccess = $true
+            } else {
+                $dcDeploymentSuccess = $false
+                if ($jobResult) {
+                    Write-Error $jobResult.Message
+                }
+            }
+    
+            $psSession | Remove-PSSession
+            Wait-WSMan `
+                -ComputerName $computerName `
+                -Authentication Default `
+                -Credential $adminCredential.contoso `
+                -ErrorAction Stop `
+                -Timeout 600
+}
+        catch {
+            $dcDeploymentSuccess = $false
+            Write-Error $Error[0]
         }
-
-        $psSession | Remove-PSSession
-        Wait-WSMan `
-            -ComputerName $computerName `
-            -Authentication Default `
-            -Credential $adminCredential.contoso `
-            -Timeout 600
     }
 }
 
