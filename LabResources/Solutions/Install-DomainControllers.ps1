@@ -451,14 +451,12 @@ if ($dcDeploymentSuccess ) {
 Write-Host '        Task 2: Verify shares for Active Directory'
 
 if ($dcDeploymentSuccess) {
-    Write-Verbose 'Verify NETLOGON and SYSVOL Shares on VN1-SRV5'
-
     $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+    $name = 'NETLOGON', 'SYSVOL'
+    Write-Verbose "Verify $name share on $computerName"
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
-    $name = 'NETLOGON', 'SYSVOL'
-    Write-Verbose "Verify $name share on $computerName"
     $smbShares = Invoke-Command -Session $psSession -ScriptBlock {
         Get-SmbShare -Name $using:name -ErrorAction SilentlyContinue
     }
