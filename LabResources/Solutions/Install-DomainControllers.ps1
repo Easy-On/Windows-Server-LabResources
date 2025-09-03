@@ -793,7 +793,6 @@ if ($aDDSfeatureInstalled) {
                 -ComputerName $computerName `
                 -Authentication Default `
                 -Credential $adminCredential.contoso `
-                -ErrorAction Stop `
                 -Timeout 600
 }
         catch {
