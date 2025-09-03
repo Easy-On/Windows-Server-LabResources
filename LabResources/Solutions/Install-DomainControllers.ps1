@@ -153,11 +153,10 @@ function Install-ADDSFeature {
                     $computerName
                 )."
             $featureOperationResult = Invoke-Command `
-                -Session $psSession -ScriptBlock { `
+                -Session $psSession -ErrorAction Stop -ScriptBlock  { `
                     Install-WindowsFeature `
                         -Name $using:name -IncludeManagementTools
-                } `
-                -ErrorAction Stop
+                }
             
             $computerName = (
                 $featureOperationResult | 
@@ -390,13 +389,7 @@ if ($computerName) {
                 }   
             }
             $psSession | Remove-PSSession
-            Wait-WSMan `
-                -ComputerName $PSItem `
-                -Authentication Default `
-                -Credential $adminCredential.adatum `
-                -ErrorAction Stop `
-                -Timeout 600
-        }
++        }
     }
 }
 
