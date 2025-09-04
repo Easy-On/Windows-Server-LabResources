@@ -578,7 +578,12 @@ if ($dcDeploymentSuccess ) {
 
             do {
                 # Try to resolve the record
-                $dnsRecords = Resolve-DnsName -Name $name -Type $type -Server $server
+                $dnsRecords = Resolve-DnsName `
+                    -Name $name `
+                    -Type $type `
+                    -Server $server `
+                    -Verbose:$false `
+                    -ErrorAction SilentlyContinue
     
                 <# 
                     Check if target is in the result.
