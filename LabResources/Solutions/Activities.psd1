@@ -241,12 +241,6 @@
             ID = 'InstallDomainControllers'
             Displayname = 'Lab: Deploying domain controllers, Exercises 1 - 5'
             Script = 'Install-DomainControllers.ps1'
-            DependsOn = @('InstallRSAT')
-        }
-        @{
-            ID = 'InstallForest'
-            Displayname = 'Lab: Deploying domain controllers, Exercise 6'
-            Script = 'Install-Forest.ps1'
             DependsOn = @()
         }
         @{
