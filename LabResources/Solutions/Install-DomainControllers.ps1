@@ -522,68 +522,106 @@ Write-Host '    Exercise 3: Check domain controller health'
 Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
 if ($dcDeploymentSuccess ) {
-    $timeout = 600 # timeout in seconds
-    
-    $endDate = (Get-Date).AddSeconds($timeout)
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
+   
     $domainControllers = 'vn1-srv5.ad.adatum.com', 'vn2-srv1.ad.adatum.com'
-    $srvNames = @(
-        '_ldap._tcp.ad.adatum.com', 
-        '_kerberos._tcp.ad.adatum.com',
-        '_gc._tcp.ad.adatum.com',
-        '_kpasswd._tcp.ad.adatum.com',
-        '_kerberos._udp.ad.adatum.com',
-        '_kpasswd._udp.ad.adatum.com',
-        '_ldap._tcp.dc._msdcs.ad.adatum.com',
-        '_kerberos._tcp.dc._msdcs.ad.adatum.com',
-        '_ldap._tcp.gc._msdcs.ad.adatum.com'
-    )
+    $timeout = 600 # timeout in seconds
 
-    Write-Verbose "Waiting for DNS SRV records $(
-        $srvNames -join ', '
-    ) pointing to Domain Controllers $(
+    $expectedDNSRecords = Invoke-Command `
+        -ComputerName $domainControllers -ScriptBlock {
+            Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
+        }
+
+    Write-Verbose "Waiting for DNS SRV records for Domain Controllers $(
         $domainControllers -join ', '
     ) to be available on $(
         $dnsServers -join ', '
     )"
-    foreach ($dnsServer in $dnsServers) {
-        foreach ($srvName in $srvNames) {
+    # Query each DNS server
+    foreach ($server in $dnsServers) {
+
+        # Go through the list of all expected DNS records line by line
+        foreach ($expectedDNSRecord in $expectedDNSRecords) {
+
+            # Split the line into columns using the space delimiter
+            $expectedDNSRecordSplit = $expectedDNSRecord -split ' '
+
+            # First column is the name
+            $name = $expectedDNSRecordSplit[0]
+            # Fourth column is the type
+            $type = $expectedDNSRecordSplit[3]
+            # Last column is the target
+            $target = $expectedDNSRecordSplit[-1]
+
+            $endDate = (Get-Date).AddSeconds($timeout)
+
+            <# 
+                If the target ends with a dot, remove it.
+                Resolve-DnsName will return the target without the ending dot.
+            #>
+            if ($target[-1] -eq '.' ) {
+                $target = $target.Substring(0, $target.Length - 1)
+            }
+
             Write-Verbose `
-                "Waiting for DNS SRV record $(
-                    $srvName
+                "Waiting for $(
+                    $type
+                ) record $(
+                    $name
                 ) pointing to $(
-                    $domainControllers
+                    $target
                 ) on DNS server $(
                     $dnsServer
                 ) until $(
                     $endDate
                 )"
-            Do {
-                $nameTargets = `
-                    Resolve-DnsName `
-                        -Name $srvName `
-                        -Type SRV `
-                        -Server $dnsServer `
-                        -Verbose:$false `
-                        -ErrorAction SilentlyContinue |
-                    Where-Object { $PSItem.NameTarget -in $domainControllers } |
-                    Select-Object -ExpandProperty NameTarget
-                $dCsWithMissingSRVRecords = $domainControllers |
-                    Where-Object { $PSItem -notin $nameTargets }
-            } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
-            if ($dCsWithMissingSRVRecords) {
+
+            do {
+                # Try to resolve the record
+                $dnsRecords = Resolve-DnsName -Name $name -Type $type -Server $server
+    
+                <# 
+                    Check if target is in the result.
+                    Unfortunately the property name for the target varies depending
+                    on the type. Therefore, we mus handle each type separately.
+                #>
+                $missingRecord = $false
+                switch ($type) { 
+                    'A' {  
+                        if ($dnsRecords.IPAddress -notcontains $target) {
+                            $missingRecord = $true
+                        }
+                    }
+                    'SRV' {  
+                        if ($dnsRecords.NameTarget -notcontains $target) {
+                            $missingRecord = $true
+                        }
+                    }
+                    'CNAME' {
+                        if ($dnsRecords.NameHost -notcontains $target) {
+                            $missingRecord = $true
+                        }
+                    }
+                    Default {
+                        Write-Warning "Type $type not expected."
+                    }
+                }
+    
+            } until (
+                -not $missingRecord -or (Get-Date) -gt $endDate
+            )
+            if ($missingRecord) {
                 Write-Error `
-                    "DNS SRV record $(
-                        $srvName
+                    "$(
+                        $type
+                    ) record $(
+                        $name
+                    ) targeting $(
+                        $target
                     ) missing on DNS server $(
                         $dnsServer
-                    ) for domain controllers $(
-                        $dCsWithMissingSRVRecords -join ', '
                     )"
                 $dcDeploymentSuccess = $false
-            }
-            if (-not $dcDeploymentSuccess) {
-                break
             }
         }
         if (-not $dcDeploymentSuccess) {
@@ -591,7 +629,7 @@ if ($dcDeploymentSuccess ) {
         }
     }
 }
-    
+
 #endregion Task 1: Verify DNS entries for Active Directory
 
 #region Task 2: Verify shares for Active Directory
