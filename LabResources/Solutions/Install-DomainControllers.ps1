@@ -475,7 +475,7 @@ if ($dcDeploymentSuccess) {
     }
 }
 else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
 #endregion Task 2: Verify shares for Active Directory
@@ -512,7 +512,7 @@ if ($dcDeploymentSuccess) {
     }
 }
 else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
 #endregion Task 1: Configure forwarders
@@ -563,7 +563,7 @@ if ($dcDeploymentSuccess) {
         }
     }
 } else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
 #endregion Task 2: Configure DNS client settings
@@ -606,7 +606,7 @@ if ($dcDeploymentSuccess) {
         }
     }
 } else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
 #endregion Task 1: Transfer the domain-wide flexible single master operation roles
@@ -641,7 +641,7 @@ if ($dcDeploymentSuccess) {
     }
 }
 else {
-    Write-Warning 'Additional domain controllers not deployed, skipping task.'
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
 #endregion Task 2: Transfer the forest-wide flexible single master operation roles
