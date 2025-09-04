@@ -186,6 +186,67 @@ function Install-ADDSFeature {
     return $aDDSfeatureInstalled
 }
 
+function Start-ADDSInstallDomainControllerJob {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]
+        $ComputerName,
+        [Parameter(Mandatory)]
+        [pscredential]
+        $Credential,
+        [Parameter(Mandatory)]
+        [string]
+        $DomainName,
+        [Parameter(Mandatory)]
+        [securestring]
+        $SafeModeAdministratorPassword,
+        [pscredential]
+        $DomainCredential = $Credential
+    )
+
+    $job = $null
+    $psSession = Request-PSSession `
+        -ComputerName $ComputerName `
+        -Credential $Credential `
+        -ErrorAction Stop
+
+    $plainSafeModeAdministratorPasswordString = `
+        [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
+                $SafeModeAdministratorPassword
+            )
+        )
+
+    $plainDomainUsername = $DomainCredential.UserName
+    $plainDomainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
+            $DomainCredential.Password
+        )
+    )
+    $job = Invoke-Command `
+        -Session $psSession `
+        -ErrorAction Stop `
+        -AsJob `
+        -ScriptBlock { `
+            $safeModeAdministratorPassword = ConvertTo-SecureString `
+                -String $using:plainSafeModeAdministratorPasswordString `
+                -AsPlainText `
+                -Force
+            $credential = New-Object `
+                -TypeName pscredential `
+                -ArgumentList `
+                    $using:plainDomainUsername, $using:plainDomainPassword
+            Install-ADDSDomainController `
+                -DomainName $using:DomainName `
+                -Credential $credential `
+                -SafeModeAdministratorPassword `
+                    $safeModeAdministratorPassword `
+                -Force
+            }
+    $psSession | Remove-PSSession
+    return $job
+}
 #endregion Helper functions
 
 #region Prerequisites
@@ -287,115 +348,65 @@ $aDDSfeatureInstalled = Install-ADDSFeature `
 Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
 $dcDeploymentSuccess = $false
 
-if ($computerName) {
-    if (-not $networkAdaptersDisabled) {
-        Write-Error 'Disabling network adapters failed. Skipping deployment of DCs.'
+if (-not $networkAdaptersDisabled) {
+    Write-Error 'Disabling network adapters failed. Skipping deployment of DCs.'
+}
+if (-not $aDDSfeatureInstalled) {
+    Write-Error `
+        'Installing Active Directory Domain Services feature failed. Skipping deployment of DCs.'
+}
+if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
+
+    #region Retrieve the list of current domain controllers
+
+    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $psSession = Request-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+
+    Write-Verbose 'Getting existing domain controller'
+    $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
+        $securePassword = ConvertTo-SecureString `
+            -String $using:defaultPassword -AsPlainText -Force
+        $credential = New-Object `
+            -TypeName pscredential `
+            -ArgumentList `
+                $using:adminUsername.adatum, $securePassword
+        Get-ADDomainController -Filter * -Credential $credential
     }
-    if (-not $aDDSfeatureInstalled) {
-        Write-Error `
-            'Installing Active Directory Domain Services feature failed. Skipping deployment of DCs.'
+
+    #endregion Retrieve the list of current domain controllers
+
+    # Build a list of domain controller to be deployed
+    $additionalDomainController = 'VN1-SRV5', 'VN2-SRV1'
+    $domainName = 'ad.adatum.com'
+
+    $dcDeploymentSuccess = $false
+
+    if ($additionalDomainController[0] -in $aDDomainController.Name) {
+        $dcDeploymentSuccess = $true
     }
-    if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
 
-        #region Retrieve the list of current domain controllers
+    # Deploy first additional domain controller as background job
 
-        $computerName = 'VN1-SRV5.ad.adatum.com'
-        $psSession = Request-PSSession `
-            -ComputerName $computerName -Credential $adminCredential.adatum
-
-        Write-Verbose 'Getting existing domain controller'
-        $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
-            $securePassword = ConvertTo-SecureString `
-                -String $using:defaultPassword -AsPlainText -Force
-            $credential = New-Object `
-                -TypeName pscredential `
-                -ArgumentList `
-                    $using:adminUsername.adatum, $securePassword
-            Get-ADDomainController -Filter * -Credential $credential
-        }
-
-        #endregion Retrieve the list of current domain controllers
-
-        # Build a list of domain controller to be deployed
-        $computerName = 'VN1-SRV5', 'VN2-SRV1'
-        $computerName = $computerName | 
-            Where-Object { $PSItem -notin $aDDomainController.Name } | 
-            ForEach-Object { "$PSItem.ad.adatum.com" }
-        $domainName = 'ad.adatum.com'
-
-        <# 
-            If we got domain controllers and VN1-SRV5 and VN2-SRV1 are in the
-            list, we can mark the deployment as successfull.
-        #>
-        if ($aDDomainController -and -not $computerName) {
-            $dcDeploymentSuccess = $true
-        }
-
-        $computerName | ForEach-Object {
-            try {
-                Write-Verbose "Promoting $(
-                        $PSItem
-                    ) as additional domain controller in $(
-                        $domainName
-                    )"
-                $psSession = Request-PSSession -ComputerName $PSItem `
-                    -Credential $adminCredential.adatum -ErrorAction Stop
-                $job = Invoke-Command `
-                    -Session $psSession `
-                    -ErrorAction Stop `
-                    -AsJob `
-                    -ScriptBlock { `
-                        $securePassword = ConvertTo-SecureString `
-                            -String $using:defaultPassword -AsPlainText -Force
-                        $safeModeAdministratorPassword = $securePassword
-                        $credential = New-Object `
-                            -TypeName pscredential `
-                            -ArgumentList `
-                                $using:adminUsername.adatum, $securePassword
-    
-                        Write-Verbose `
-                            "Promoting $(
-                                $env:hostname
-                            ) as additional domain controller."
-                        Install-ADDSDomainController `
-                            -DomainName $using:domainName `
-                            -Credential $credential `
-                            -SafeModeAdministratorPassword `
-                                $safeModeAdministratorPassword `
-                            -Force `
-                            -ErrorAction Stop
-                    }
-                $job | Wait-Job
-                $jobResult = $job | Receive-Job
-            }
-            catch {
-                $dcDeploymentSuccess = $false
-                Write-Error $Error[0]
-            }
-            finally {
-                if ($jobResult -and ($jobResult.Status -eq 'Success')) {
-                    $dcDeploymentSuccess = $true
-                }
-                if (-not $jobResult -or -not ($jobResult.Status -eq 'Success')){
-                    $dcDeploymentSuccess = $false
-                    if ($jobResult) {
-                        Write-Error `
-                            "Deployment of $(
-                                $PSItem
-                            ) failed with error: $(
-                                $jobResult.Message
-                            )"
-                    }
-                }   
-            }
-            $psSession | Remove-PSSession
-        }
+    if ($additionalDomainController[0] -notin $aDDomainController.Name) {
+        Write-Verbose "Promoting $(
+                $additionalDomainController[0]
+            ) as additional domain controller in $(
+                $domainName
+            )"
+        $additionalDomainControllerJob = `
+            Start-ADDSInstallDomainControllerJob `
+                -ComputerName $additionalDomainController[0] `
+                -Credential $adminCredential.adatum `
+                -DomainName $domainName `
+                -SafeModeAdministratorPassword $defaultSecurePassword `
+                -DomainCredential $adminCredential.adatum
     }
 }
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
-
 #endregion Exercise 1: Deploy additional domain controllers
+
 
 #region Exercise 2: Deploy a new forest
 
@@ -449,6 +460,7 @@ if (-not $aDDSfeatureInstalled) {
             $computerName
         ). Skipping deployment of new forest."
 }
+
 if ($aDDSfeatureInstalled) {
     $operatingSystemDC = Invoke-Command -Session $psSession -ScriptBlock {
         Get-WmiObject `
@@ -472,16 +484,16 @@ if ($aDDSfeatureInstalled) {
             -String $defaultPassword -AsPlainText -Force
 
         Write-Verbose "Promote $computerName as new forest $domainName"
-        try {
-            $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
-                Install-ADDSForest `
-                    -DomainName $using:domainName `
-                    -DomainNetbiosName $using:domainNetbiosName `
-                    -SafeModeAdministratorPassword `
-                        $using:safeModeAdministratorPassword `
-                    -InstallDns `
-                    -Force
-            }
+        $newForestJob = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
+            Install-ADDSForest `
+                -DomainName $using:domainName `
+                -DomainNetbiosName $using:domainNetbiosName `
+                -SafeModeAdministratorPassword `
+                    $using:safeModeAdministratorPassword `
+                -InstallDns `
+                -Force
+        }
+        $psSession | Remove-PSSession
     
             $job | Wait-Job
             $jobResult = Receive-Job -Job $job
@@ -495,23 +507,239 @@ if ($aDDSfeatureInstalled) {
                 }
             }
     
-            $psSession | Remove-PSSession
             Wait-WSMan `
                 -ComputerName $computerName `
                 -Authentication Default `
                 -Credential $adminCredential.contoso `
                 -Timeout 600
-}
-        catch {
-            $dcDeploymentSuccess = $false
-            Write-Error $Error[0]
-        }
     }
 }
 
 #endregion Task 2: Configure Active Directory Domain Services as new forest
 
 #endregion Exercise 2: Deploy a new forest
+
+#region Wait for first additional domain controller to be deployed
+$additionalDomainControllerJob | Wait-Job
+$additionalDomainControllerJobResult = `
+    Receive-Job -Job $additionalDomainControllerJob
+
+if ($additionalDomainControllerJob -and ($jobResult.Status -eq 'Success')) {
+    $dcDeploymentSuccess = $true
+}
+
+if (-not $jobResult -or -not ($jobResult.Status -eq 'Success')){
+    $dcDeploymentSuccess = $false
+    if ($jobResult) {
+        Write-Error `
+            "Deployment of $(
+                $additionalDomainController[0]
+            ) failed with error: $(
+                $additionalDomainControllerJobResult.Message
+            )"
+    }
+}
+#endregion Wait for first additional domain controller to be deployed
+
+if ($dcDeploymentSuccess) {
+    #region Exercise 1: Deploy additional domain controllers
+
+    Write-Host '    Exercise 1: Deploy additional domain controllers'
+
+    #region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+
+    Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
+
+    $additionalDomainControllerJob = $null
+    $additionalDomainControllerJob =  `
+        $additionalDomainController[
+            1..($additionalDomainController.Length - 1)
+        ] |
+        ForEach-Object {
+            if ($PSItem -notin $aDDomainController.Name) {
+                Write-Verbose `
+                    "Promoting $(
+                        $PSItem
+                    ) as additional domain controller in $(
+                        $domainName
+                    )"
+                Start-ADDSInstallDomainControllerJob `
+                    -ComputerName $PSItem `
+                    -Credential $adminCredential.adatum `
+                    -DomainName $domainName `
+                    -SafeModeAdministratorPassword $defaultSecurePassword `
+                    -DomainCredential $adminCredential.adatum
+            }
+        }
+
+    #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+}
+
+#region Wait for forest to be deployed
+
+$newForestJob | Wait-Job
+$newForestJobResult = `
+    Receive-Job -Job $newForestJob
+
+if ($newForestJob -and ($newForestJobResult.Status -eq 'Success')) {
+    $dcDeploymentSuccess = $true
+}
+
+if (
+    -not $newForestJobResult -or -not ($newForestJobResult.Status -eq 'Success')
+){
+    $dcDeploymentSuccess = $false
+    if ($newForestJobResult) {
+        Write-Error `
+            "Deployment of $(
+                $additionalDomainController[0]
+            ) failed with error: $(
+                $newForestJobResult.Message
+            )"
+    }
+}
+
+#endregion Wait for forest to be deployed
+
+#region Exercise 3: Join client to new forest
+
+Write-Host '    Exercise 3: Join client to new forest'
+
+#region Task 1: Change the DNS client settings
+
+Write-Host '        Task 1: Change the DNS client settings'
+
+if ($env:COMPUTERNAME -ne 'CL3') {
+    Write-Warning 'Skipped task. Please rerun the script on CL3.'
+}
+if (-not $dcDeploymentSuccess) {
+    Write-Error 'Skipped task. Deployment of new forest failed.'
+}
+if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
+    $desiredServerAddresses = '10.1.2.16'
+    $interfaceIndex = (
+        Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
+    ).InterfaceIndex
+
+    $dnsClientServerAddress = Get-DnsClientServerAddress `
+        -InterfaceIndex $interfaceIndex -AddressFamily IPv4
+
+    Write-Verbose `
+        "Set DNS client server addresses to $desiredServerAddresses on CL3"
+
+    Set-DnsClientServerAddress `
+        -InterfaceIndex $interfaceIndex `
+        -ServerAddresses $desiredServerAddresses `
+}
+
+#endregion Task 1: Change the DNS client settings
+
+#region Task 2: Connect to domain
+
+Write-Host '        Task 2: Connect to domain'
+
+if ($env:COMPUTERNAME -ne 'CL3') {
+    Write-Warning 'Skipped task. Please rerun the script on CL3.'
+}
+if (-not $dcDeploymentSuccess) {
+    Write-Error 'Skipped task. Deployment of new forest failed.'
+}
+$domainJoinSuccess = $false
+
+if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
+    $interfaceIndex = (
+        Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
+    ).InterfaceIndex
+
+    $dnsClientServerAddress = Get-DnsClientServerAddress `
+        -InterfaceIndex $interfaceIndex -AddressFamily IPv4
+
+    $dnsClientServerAddressConfigured = `
+        $dnsClientServerAddress.ServerAddresses.Count -eq 1 `
+        -and $dnsClientServerAddress.ServerAddresses -contains '10.1.2.16'
+    if (-not $dnsClientServerAddressConfigured) {
+        Write-Error `
+            'DNS client server address is not configured correctly. Skipping domain join.'
+    }
+
+    if ($dnsClientServerAddressConfigured) {
+        $domainName = 'ad.contoso.com'
+        $csDomain = (Get-ComputerInfo).CsDomain
+        if ($csDomain -eq $domainName) {
+            Write-Verbose "Computer is already a member of the domain $(
+                $domainName
+            )"
+        }
+        if ($csDomain -ne $domainName) {
+            $seconds = 10
+            while (
+                -not (
+                    Resolve-DnsName `
+                        -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
+                )
+            ) {
+                Write-Verbose `
+                    "Waiting $(
+                        $seconds
+                    ) seconds for domain $(
+                        $domainName
+                    ) to become available."
+                Start-Sleep -Seconds $seconds
+            }
+        
+            Write-Verbose "Add the computer to the domain $domainName."
+            try {
+                Add-Computer `
+                    -DomainName $domainName `
+                    -Credential $adminCredential.contoso `
+                    -ErrorAction Stop
+                $domainJoinSuccess = $true        
+            }
+            catch {
+                $domainJoinSuccess = $false
+                Write-Error $error[0]
+            }
+        }
+    }
+}
+
+#endregion Task 2: Connect to domain
+
+#endregion Exercise 3: Join client to new forest
+
+#region Wait for additional domain controllers to be deployed
+
+if ($additionalDomainControllerJob) {
+    $additionalDomainControllerJob | ForEach-Object {
+        $PSItem | Wait-Job
+        $additionalDomainControllerJobResult = `
+            Receive-Job -Job $PSItem
+    
+        if (
+            $additionalDomainControllerJobResult `
+            -and ($additionalDomainControllerJobResult.Status -eq 'Success')
+        ) {
+            $dcDeploymentSuccess = $true
+        }
+    
+        if (
+            -not $additionalDomainControllerJobResult `
+            -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
+        ){
+            $dcDeploymentSuccess = $false
+            if ($additionalDomainControllerJobResult) {
+                Write-Error `
+                    "Deployment failed with error: $(
+                        $additionalDomainControllerJobResult.Message
+                    )"
+            }
+        }
+    }
+}
+
+#endregion Wait for additional domain controllers to be deployed
 
 #region Exercise 3: Check domain controller health
 
@@ -864,113 +1092,6 @@ else {
   
 #endregion Exercise 5: Transfer flexible single master operation roles
 
-#region Exercise 6: Join client to new forest
-
-Write-Host '    Exercise 6: Join client to new forest'
-
-#region Task 1: Change the DNS client settings
-
-Write-Host '        Task 1: Change the DNS client settings'
-
-if ($env:COMPUTERNAME -ne 'CL3') {
-    Write-Warning 'Skipped task. Please rerun the script on CL3.'
-}
-if (-not $dcDeploymentSuccess) {
-    Write-Error 'Skipped task. Deployment of new forest failed.'
-}
-if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
-    $desiredServerAddresses = '10.1.2.16'
-    $interfaceIndex = (
-        Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
-    ).InterfaceIndex
-
-    $dnsClientServerAddress = Get-DnsClientServerAddress `
-        -InterfaceIndex $interfaceIndex -AddressFamily IPv4
-
-    Write-Verbose `
-        "Set DNS client server addresses to $desiredServerAddresses on CL3"
-
-    Set-DnsClientServerAddress `
-        -InterfaceIndex $interfaceIndex `
-        -ServerAddresses $desiredServerAddresses `
-}
-
-#endregion Task 1: Change the DNS client settings
-
-#region Task 2: Connect to domain
-
-Write-Host '        Task 2: Connect to domain'
-
-if ($env:COMPUTERNAME -ne 'CL3') {
-    Write-Warning 'Skipped task. Please rerun the script on CL3.'
-}
-if (-not $dcDeploymentSuccess) {
-    Write-Error 'Skipped task. Deployment of new forest failed.'
-}
-$domainJoinSuccess = $false
-
-if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
-    $interfaceIndex = (
-        Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
-    ).InterfaceIndex
-
-    $dnsClientServerAddress = Get-DnsClientServerAddress `
-        -InterfaceIndex $interfaceIndex -AddressFamily IPv4
-
-    $dnsClientServerAddressConfigured = `
-        $dnsClientServerAddress.ServerAddresses.Count -eq 1 `
-        -and $dnsClientServerAddress.ServerAddresses -contains '10.1.2.16'
-    if (-not $dnsClientServerAddressConfigured) {
-        Write-Error `
-            'DNS client server address is not configured correctly. Skipping domain join.'
-    }
-
-    if ($dnsClientServerAddressConfigured) {
-        $domainName = 'ad.contoso.com'
-        $csDomain = (Get-ComputerInfo).CsDomain
-        if ($csDomain -eq $domainName) {
-            Write-Verbose "Computer is already a member of the domain $(
-                $domainName
-            )"
-        }
-        if ($csDomain -ne $domainName) {
-            $seconds = 10
-            while (
-                -not (
-                    Resolve-DnsName `
-                        -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
-                )
-            ) {
-                Write-Verbose `
-                    "Waiting $(
-                        $seconds
-                    ) seconds for domain $(
-                        $domainName
-                    ) to become available."
-                Start-Sleep -Seconds $seconds
-            }
-        
-            Write-Verbose "Add the computer to the domain $domainName."
-            try {
-                Add-Computer `
-                    -DomainName $domainName `
-                    -Credential $adminCredential.contoso `
-                    -ErrorAction Stop
-                $domainJoinSuccess = $true        
-            }
-            catch {
-                $domainJoinSuccess = $false
-                Write-Error $error[0]
-            }
-        }
-    }
-}
-
-#endregion Task 2: Connect to domain
-
-#endregion Exercise 6: Join client to new forest
 
 Get-PSSession | Remove-PSSession
 
