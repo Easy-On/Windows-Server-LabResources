@@ -437,6 +437,9 @@ if ($dcDeploymentSuccess ) {
                     Select-Object -ExpandProperty NameTarget
                 $dCsWithMissingSRVRecords = $domainControllers |
                     Where-Object { $PSItem -notin $nameTargets }
+                if ($dCsWithMissingSRVRecords) {
+                    Start-Sleep -Seconds 60
+                }
             } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
             $dcDeploymentSuccess = $dcDeploymentSuccess `
                 -and -not $dCsWithMissingSRVRecords
