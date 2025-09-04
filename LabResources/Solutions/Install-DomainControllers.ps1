@@ -395,11 +395,127 @@ if ($computerName) {
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
-
 #endregion Exercise 1: Deploy additional domain controllers
-#region Exercise 2: Check domain controller health
 
-Write-Host '    Exercise 2: Check domain controller health'
+#region Exercise 2: Deploy a new forest
+
+Write-Host '    Exercise 2: Deploy a new forest'
+
+#region Task 1: Install Active Directory Domain Services on VN2-SRV2
+
+Write-Host `
+    '        Task 1: Install Active Directory Domain Services on VN2-SRV2'
+
+$computerName = '10.1.2.16' # VN2-SRV2
+$aDDSfeatureInstalled = $false
+$aDDSfeatureInstalled = Install-ADDSFeature `
+    -ComputerName $computerName `
+    -Credential $adminCredential.local
+
+#endregion Task 1: Install Active Directory Domain Services on VN2-SRV2
+
+#region Task 2: Configure Active Directory Domain Services as new forest
+
+Write-Host '        Task 2: Configure Active Directory Domain Services as new forest'
+
+$computerName = '10.1.2.16' # VN2-SRV2
+$psSession = Request-PSSession `
+    -ComputerName $computerName -Credential $adminCredential.local
+
+
+#region Configure the firewall to allow remote administration from different subnet
+
+$netFirewallAddressFilter = Invoke-Command -Session $psSession -ScriptBlock {
+    Get-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC | 
+    Get-NetFirewallAddressFilter
+}
+
+if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
+    Write-Verbose 'Configure the firewall to allow remote administration from different subnet'
+    Invoke-Command -Session $psSession -ScriptBlock {
+        $using:netFirewallAddressFilter |
+        Set-NetFirewallAddressFilter -RemoteAddress Any
+    }
+}
+
+#endregion Configure the firewall to allow remote administration from different subnet
+
+# Install new forest
+
+$dcDeploymentSuccess = $false
+if (-not $aDDSfeatureInstalled) {
+    Write-Error `
+        "Active Directory Domain Services feature could not be installed on $(
+            $computerName
+        ). Skipping deployment of new forest."
+}
+if ($aDDSfeatureInstalled) {
+    $operatingSystemDC = Invoke-Command -Session $psSession -ScriptBlock {
+        Get-WmiObject `
+            -Query 'SELECT * from Win32_OperatingSystem where ProductType="2"'
+        }
+    if ($operatingSystemDC) {
+        Write-Verbose `
+            "Operating system on $(
+                $computerName
+            ) is already configured as domain controller."
+        $dcDeploymentSuccess = $true
+    }
+    if (-not $operatingSystemDC) {
+        $domainName = 'ad.contoso.com'
+        $domainNetbiosName = 'CONTOSO'
+
+        Write-Verbose `
+            'Store the Directory Services Restore Mode (DSRM) password in a variable.'
+
+        $safeModeAdministratorPassword = ConvertTo-SecureString `
+            -String $defaultPassword -AsPlainText -Force
+
+        Write-Verbose "Promote $computerName as new forest $domainName"
+        try {
+            $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
+                Install-ADDSForest `
+                    -DomainName $using:domainName `
+                    -DomainNetbiosName $using:domainNetbiosName `
+                    -SafeModeAdministratorPassword `
+                        $using:safeModeAdministratorPassword `
+                    -InstallDns `
+                    -Force
+            }
+    
+            $job | Wait-Job
+            $jobResult = Receive-Job -Job $job
+    
+            if ($jobResult -and $jobResult.Status -eq 'Success') {
+                $dcDeploymentSuccess = $true
+            } else {
+                $dcDeploymentSuccess = $false
+                if ($jobResult) {
+                    Write-Error $jobResult.Message
+                }
+            }
+    
+            $psSession | Remove-PSSession
+            Wait-WSMan `
+                -ComputerName $computerName `
+                -Authentication Default `
+                -Credential $adminCredential.contoso `
+                -Timeout 600
+}
+        catch {
+            $dcDeploymentSuccess = $false
+            Write-Error $Error[0]
+        }
+    }
+}
+
+#endregion Task 2: Configure Active Directory Domain Services as new forest
+
+#endregion Exercise 2: Deploy a new forest
+
+#region Exercise 3: Check domain controller health
+
+Write-Host '    Exercise 3: Check domain controller health'
 
 #region Task 1: Verify DNS entries for Active Directory
     
@@ -512,15 +628,15 @@ else {
 
 #endregion Task 2: Verify shares for Active Directory
 
-#endregion Exercise 2: Check domain controller health
+#endregion Exercise 3: Check domain controller health
 
-#region Exercise 3: Optimize DNS
+#region Exercise 4: Optimize DNS
 
-Write-Host '    Exercise 3: Optimize DNS'
+Write-Host '    Exercise 4: Optimize DNS'
 
-#region Task 1: Configure forwarders
+#region Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1
 
-Write-Host '        Task 1: Configure forwarders'
+Write-Host '        Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1'
 
 if ($dcDeploymentSuccess) {
     foreach ($computerName in @(
@@ -547,7 +663,7 @@ else {
     Write-Error 'Additional domain controllers not deployed, skipping task.'
 }
 
-#endregion Task 1: Configure forwarders
+#endregion Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1
 
 #region Task 2: Configure DNS client settings
 
@@ -600,11 +716,36 @@ if ($dcDeploymentSuccess) {
 
 #endregion Task 2: Configure DNS client settings
 
-#endregion Exercise 3: Optimize DNS
+#region Task 3: Configure forwarders on VN2-SRV2
 
-#region Exercise 4: Transfer flexible single master operation roles
+Write-Host '        Task 3: Configure forwarders on VN2-SRV2'
 
-Write-Host '    Exercise 4: Transfer flexible single master operation roles'
+if ($dcDeploymentSuccess) {
+    $psSession = Request-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.contoso
+
+    Write-Verbose `
+        "Waiting for DNS service to start on $computerName"
+
+    Invoke-Command -Session $psSession -ScriptBlock {
+        $name = 'DNS'
+        if ((Get-Service -Name $name) -ne 'Running') {
+            Start-Service -Name $name
+        }
+    }
+
+    Invoke-Command -Session $psSession -ScriptBlock {
+        Set-DnsServerForwarder -IPAddress '8.8.8.8', '8.8.4.4'
+    }
+}
+
+#endregion Task 3: Configure forwarders on VN2-SRV2
+
+#endregion Exercise 4: Optimize DNS
+
+#region Exercise 5: Transfer flexible single master operation roles
+
+Write-Host '    Exercise 5: Transfer flexible single master operation roles'
 
 #region Task 1: Transfer the domain-wide flexible single master operation roles
 
@@ -678,125 +819,15 @@ else {
 
 #endregion Task 2: Transfer the forest-wide flexible single master operation roles
   
-#endregion Exercise 4: Transfer flexible single master operation roles
+#endregion Exercise 5: Transfer flexible single master operation roles
 
-#region Exercise 5: Deploy a new forest
+#region Exercise 6: Join client to new forest
 
-Write-Host '    Exercise 4: Deploy a new forest'
+Write-Host '    Exercise 6: Join client to new forest'
 
-#region Task 1: Install Active Directory Domain Services on VN2-SRV2
+#region Task 1: Change the DNS client settings
 
-Write-Host `
-    '        Task 1: Install Active Directory Domain Services on VN2-SRV2'
-
-$computerName = '10.1.2.16' # VN2-SRV2
-$aDDSfeatureInstalled = $false
-$aDDSfeatureInstalled = Install-ADDSFeature `
-    -ComputerName $computerName `
-    -Credential $adminCredential.local
-
-#endregion Task 1: Install Active Directory Domain Services on VN2-SRV2
-
-#region Task 2: Configure Active Directory Domain Services as new forest
-
-Write-Host '        Task 2: Configure Active Directory Domain Services as new forest'
-
-$computerName = '10.1.2.16' # VN2-SRV2
-$psSession = Request-PSSession `
-    -ComputerName $computerName -Credential $adminCredential.local
-
-
-#region Configure the firewall to allow remote administration from different subnet
-
-$netFirewallAddressFilter = Invoke-Command -Session $psSession -ScriptBlock {
-    Get-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC | 
-    Get-NetFirewallAddressFilter
-}
-
-if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
-    Write-Verbose 'Configure the firewall to allow remote administration from different subnet'
-    Invoke-Command -Session $psSession -ScriptBlock {
-        $using:netFirewallAddressFilter |
-        Set-NetFirewallAddressFilter -RemoteAddress Any
-    }
-}
-
-#endregion Configure the firewall to allow remote administration from different subnet
-
-# Install new forest
-
-$dcDeploymentSuccess = $false
-if (-not $aDDSfeatureInstalled) {
-    Write-Error `
-        "Active Directory Domain Services feature could not be installed on $(
-            $computerName
-        ). Skipping deployment of new forest."
-}
-if ($aDDSfeatureInstalled) {
-    $operatingSystemDC = Invoke-Command -Session $psSession -ScriptBlock {
-        Get-WmiObject `
-            -Query 'SELECT * from Win32_OperatingSystem where ProductType="2"'
-        }
-    if ($operatingSystemDC) {
-        Write-Verbose `
-            "Operating system on $(
-                $computerName
-            ) is already configured as domain controller."
-        $dcDeploymentSuccess = $true
-    }
-    if (-not $operatingSystemDC) {
-        $domainName = 'ad.contoso.com'
-        $domainNetbiosName = 'CONTOSO'
-
-        Write-Verbose `
-            'Store the Directory Services Restore Mode (DSRM) password in a variable.'
-
-        $safeModeAdministratorPassword = ConvertTo-SecureString `
-            -String $defaultPassword -AsPlainText -Force
-
-        Write-Verbose "Promote $computerName as new forest $domainName"
-        try {
-            $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
-                Install-ADDSForest `
-                    -DomainName $using:domainName `
-                    -DomainNetbiosName $using:domainNetbiosName `
-                    -SafeModeAdministratorPassword `
-                        $using:safeModeAdministratorPassword `
-                    -InstallDns `
-                    -Force
-            }
-    
-            $job | Wait-Job
-            $jobResult = Receive-Job -Job $job
-    
-            if ($jobResult -and $jobResult.Status -eq 'Success') {
-                $dcDeploymentSuccess = $true
-            } else {
-                $dcDeploymentSuccess = $false
-                if ($jobResult) {
-                    Write-Error $jobResult.Message
-                }
-            }
-    
-            $psSession | Remove-PSSession
-            Wait-WSMan `
-                -ComputerName $computerName `
-                -Authentication Default `
-                -Credential $adminCredential.contoso `
-                -Timeout 600
-}
-        catch {
-            $dcDeploymentSuccess = $false
-            Write-Error $Error[0]
-        }
-    }
-}
-
-#endregion Task 2: Configure Active Directory Domain Services as new forest
-
-#region Task 3: Change the DNS client settings
-
-Write-Host '        Task 3: Change the DNS client settings'
+Write-Host '        Task 1: Change the DNS client settings'
 
 if ($env:COMPUTERNAME -ne 'CL3') {
     Write-Warning 'Skipped task. Please rerun the script on CL3.'
@@ -822,11 +853,11 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
         -ServerAddresses $desiredServerAddresses `
 }
 
-#endregion Task 3: Change the DNS client settings
+#endregion Task 1: Change the DNS client settings
 
-#region Task 4: Connect to domain
+#region Task 2: Connect to domain
 
-Write-Host '        Task 4: Connect to domain'
+Write-Host '        Task 2: Connect to domain'
 
 if ($env:COMPUTERNAME -ne 'CL3') {
     Write-Warning 'Skipped task. Please rerun the script on CL3.'
@@ -894,35 +925,9 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
     }
 }
 
-#endregion Task 4: Connect to domain
+#endregion Task 2: Connect to domain
 
-
-#region Task 5: Configure forwarders
-
-Write-Host '        Task 5: Configure forwarders'
-
-if ($dcDeploymentSuccess) {
-    $psSession = Request-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.contoso
-
-    Write-Verbose `
-        "Waiting for DNS service to start on $computerName"
-
-    Invoke-Command -Session $psSession -ScriptBlock {
-        $name = 'DNS'
-        if ((Get-Service -Name $name) -ne 'Running') {
-            Start-Service -Name $name
-        }
-    }
-
-    Invoke-Command -Session $psSession -ScriptBlock {
-        Set-DnsServerForwarder -IPAddress '8.8.8.8', '8.8.4.4'
-    }
-}
-
-#endregion Task 5: Configure forwarders
-
-#endregion Exercise 4: Deploy a new forest
+#endregion Exercise 6: Join client to new forest
 
 Get-PSSession | Remove-PSSession
 
@@ -938,5 +943,3 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
     Read-Host 'Press ENTER to restart'
     Restart-Computer
 }
-
-
