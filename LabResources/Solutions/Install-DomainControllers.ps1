@@ -429,11 +429,19 @@ if ($dcDeploymentSuccess ) {
         $domainControllers -join ', '
     ) to be available on $(
         $dnsServers -join ', '
-    ) until $(
-        $endDate
     )"
     foreach ($dnsServer in $dnsServers) {
         foreach ($srvName in $srvNames) {
+            Write-Verbose `
+                "Waiting for DNS SRV record $(
+                    $srvName
+                ) pointing to $(
+                    $domainControllers
+                ) on DNS server $(
+                    $dnsServer
+                ) until $(
+                    $endDate
+                )"
             Do {
                 $nameTargets = `
                     Resolve-DnsName `
@@ -447,8 +455,23 @@ if ($dcDeploymentSuccess ) {
                 $dCsWithMissingSRVRecords = $domainControllers |
                     Where-Object { $PSItem -notin $nameTargets }
             } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
-            $dcDeploymentSuccess = $dcDeploymentSuccess `
-                -and -not $dCsWithMissingSRVRecords
+            if ($dCsWithMissingSRVRecords) {
+                Write-Error `
+                    "DNS SRV record $(
+                        $srvName
+                    ) missing on DNS server $(
+                        $dnsServer
+                    ) for domain controllers $(
+                        $dCsWithMissingSRVRecords -join ', '
+                    )"
+                $dcDeploymentSuccess = $false
+            }
+            if (-not $dcDeploymentSuccess) {
+                break
+            }
+        }
+        if (-not $dcDeploymentSuccess) {
+            break
         }
     }
 }
