@@ -408,8 +408,6 @@ Write-Host '        Task 1: Verify DNS entries for Active Directory'
 if ($dcDeploymentSuccess ) {
     $timeout = 600 # timeout in seconds
     
-    Write-Verbose `
-        'Verify SRV records in ad.adatum.com pointing to VN1-SRV5 and VN2-SRV1.'
     $endDate = (Get-Date).AddSeconds($timeout)
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
     $domainControllers = 'vn1-srv5.ad.adatum.com', 'vn2-srv1.ad.adatum.com'
@@ -424,6 +422,16 @@ if ($dcDeploymentSuccess ) {
         '_kerberos._tcp.dc._msdcs.ad.adatum.com',
         '_ldap._tcp.gc._msdcs.ad.adatum.com'
     )
+
+    Write-Verbose "Waiting for DNS SRV records $(
+        $srvNames -join ', '
+    ) pointing to Domain Controllers $(
+        $domainControllers -join ', '
+    ) to be available on $(
+        $dnsServers -join ', '
+    ) until $(
+        $endDate
+    )"
     foreach ($dnsServer in $dnsServers) {
         foreach ($srvName in $srvNames) {
             Do {
@@ -432,14 +440,12 @@ if ($dcDeploymentSuccess ) {
                         -Name $srvName `
                         -Type SRV `
                         -Server $dnsServer `
+                        -Verbose:$false `
                         -ErrorAction SilentlyContinue |
                     Where-Object { $PSItem.NameTarget -in $domainControllers } |
                     Select-Object -ExpandProperty NameTarget
                 $dCsWithMissingSRVRecords = $domainControllers |
                     Where-Object { $PSItem -notin $nameTargets }
-                if ($dCsWithMissingSRVRecords) {
-                    Start-Sleep -Seconds 60
-                }
             } until (-not $dCsWithMissingSRVRecords -or (Get-Date) -gt $endDate)
             $dcDeploymentSuccess = $dcDeploymentSuccess `
                 -and -not $dCsWithMissingSRVRecords
@@ -725,6 +731,7 @@ if ($aDDSfeatureInstalled) {
         $safeModeAdministratorPassword = ConvertTo-SecureString `
             -String $defaultPassword -AsPlainText -Force
 
+        Write-Verbose "Promote $computerName as new forest $domainName"
         try {
             $job = Invoke-Command -Session $psSession -AsJob -ScriptBlock {
                 Install-ADDSForest `
