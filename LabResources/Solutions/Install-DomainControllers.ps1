@@ -557,12 +557,20 @@ if ($additionalDomainControllerDeploymentSuccess) {
 
     $additionalDomainControllerDeploymentSuccess = $false
     $additionalDomainControllerJob = $null
-    $additionalDomainControllerJob =  `
+    $moreDomainControllersToDeploy = `
         $additionalDomainController[
             1..($additionalDomainController.Length - 1)
         ] |
-        ForEach-Object {
-            if ($PSItem -notin $aDDomainController.Name) {
+        Where-Object { 
+            $PSItem -notin $aDDomainController.Name
+        }
+    if (-not $moreDomainControllersToDeploy) {
+        $additionalDomainControllerDeploymentSuccess = $true
+    }
+    if ($moreDomainControllersToDeploy) {
+        $additionalDomainControllerJob =  `
+            $moreDomainControllersToDeploy|
+            ForEach-Object {
                 Write-Verbose `
                     "Promoting $(
                         $PSItem
@@ -576,8 +584,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
                     -SafeModeAdministratorPassword $defaultSecurePassword `
                     -DomainCredential $adminCredential.adatum
             }
-        }
-
+    }
     #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
     #endregion Exercise 1: Deploy additional domain controllers
 }
