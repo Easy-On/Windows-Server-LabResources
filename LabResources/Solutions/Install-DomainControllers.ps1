@@ -1105,8 +1105,10 @@ else {
 Get-PSSession | Remove-PSSession
 
 # Wait for DNS server tools installation job to complete
-Write-Verbose 'Waiting for DNS server tools installation job to complete'
-$jobDnsServerToolsResult = $jobDnsServerTools | Wait-Job | Receive-Job
+if ($jobDnsServerTools) {
+    Write-Verbose 'Waiting for DNS server tools installation job to complete'
+    $jobDnsServerToolsResult = $jobDnsServerTools | Wait-Job | Receive-Job
+}
 
 # Do we need to restart the local computer?
 if ($jobDnsServerToolsResult) {
