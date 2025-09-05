@@ -349,7 +349,7 @@ $aDDSfeatureInstalled = Install-ADDSFeature `
 #region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
 
 Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
-$dcDeploymentSuccess = $false
+$additionalDomainControllerDeploymentSuccess = $false
 
 if (-not $networkAdaptersDisabled) {
     Write-Error 'Disabling network adapters failed. Skipping deployment of DCs.'
@@ -383,10 +383,10 @@ if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
     $additionalDomainController = 'VN1-SRV5', 'VN2-SRV1'
     $domainName = 'ad.adatum.com'
 
-    $dcDeploymentSuccess = $false
+    $additionalDomainControllerDeploymentSuccess = $false
 
     if ($additionalDomainController[0] -in $aDDomainController.Name) {
-        $dcDeploymentSuccess = $true
+        $additionalDomainControllerDeploymentSuccess = $true
     }
 
     # Deploy first additional domain controller as background job
@@ -457,7 +457,7 @@ if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
 
 # Install new forest
 
-$dcDeploymentSuccess = $false
+$forestDeploymentSuccess = $false
 if (-not $aDDSfeatureInstalled) {
     Write-Error `
         "Active Directory Domain Services feature could not be installed on $(
@@ -475,7 +475,7 @@ if ($aDDSfeatureInstalled) {
             "Operating system on $(
                 $computerName
             ) is already configured as domain controller."
-        $dcDeploymentSuccess = $true
+        $forestDeploymentSuccess = $true
     }
     if (-not $operatingSystemDC) {
         $domainName = 'ad.contoso.com'
@@ -505,19 +505,22 @@ if ($aDDSfeatureInstalled) {
 #endregion Exercise 2: Deploy a new forest
 
 #region Wait for first additional domain controller to be deployed
-Write-Verbose `
-    "Waiting for the configuration of $(
-        $additionalDomainControllerJob.Location
-    ) as additional domain controller to complete"
-$additionalDomainControllerJobResult = $additionalDomainControllerJob |
-    Wait-Job | 
-    Receive-Job
+
+if ($additionalDomainControllerJob) {
+    Write-Verbose `
+        "Waiting for the configuration of $(
+            $additionalDomainControllerJob.Location
+        ) as additional domain controller to complete"
+    $additionalDomainControllerJobResult = $additionalDomainControllerJob |
+        Wait-Job | 
+        Receive-Job
+}
 
 if (
     $additionalDomainControllerJobResult `
     -and ($additionalDomainControllerJobResult.Status -eq 'Success')
 ) {
-    $dcDeploymentSuccess = $true
+    $additionalDomainControllerDeploymentSuccess = $true
     Write-Host $additionalDomainControllerJobResult.Message
 }
 
@@ -525,7 +528,7 @@ if (
     -not $additionalDomainControllerJobResult `
     -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
 ){
-    $dcDeploymentSuccess = $false
+    $additionalDomainControllerDeploymentSuccess = $false
     if ($additionalDomainControllerJobResult) {
         Write-Error `
             "Deployment of $(
@@ -537,7 +540,7 @@ if (
 }
 #endregion Wait for first additional domain controller to be deployed
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     #region Exercise 1: Deploy additional domain controllers
 
     Write-Host '    Exercise 1: Deploy additional domain controllers'
@@ -583,14 +586,12 @@ if ($newForestJob) {
 }
 
 if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
-    $dcDeploymentSuccess = $true
+    $forestDeploymentSuccess = $true
     Write-Host $newForestJobResult.Message
 }
 
-if (
-    -not $newForestJobResult -or -not ($newForestJobResult.Status -eq 'Success')
-){
-    $dcDeploymentSuccess = $false
+if (-not $newForestJobResult -or $newForestJobResult.Status -ne 'Success') {
+    $forestDeploymentSuccess = $false
     if ($newForestJobResult) {
         Write-Error `
             "Deployment of $(
@@ -614,10 +615,10 @@ Write-Host '        Task 1: Change the DNS client settings'
 if ($env:COMPUTERNAME -ne 'CL3') {
     Write-Warning 'Skipped task. Please rerun the script on CL3.'
 }
-if (-not $dcDeploymentSuccess) {
+if (-not $forestDeploymentSuccess) {
     Write-Error 'Skipped task. Deployment of new forest failed.'
 }
-if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
+if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
     $desiredServerAddresses = '10.1.2.16'
     $interfaceIndex = (
         Get-NetIPAddress -AddressFamily IPv4 |
@@ -644,12 +645,12 @@ Write-Host '        Task 2: Connect to domain'
 if ($env:COMPUTERNAME -ne 'CL3') {
     Write-Warning 'Skipped task. Please rerun the script on CL3.'
 }
-if (-not $dcDeploymentSuccess) {
+if (-not $forestDeploymentSuccess) {
     Write-Error 'Skipped task. Deployment of new forest failed.'
 }
 $domainJoinSuccess = $false
 
-if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
+if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
     $interfaceIndex = (
         Get-NetIPAddress -AddressFamily IPv4 |
         Where-Object { $PSItem.IPAddress -like '10.1.2.*' }
@@ -729,7 +730,8 @@ if ($additionalDomainControllerJob) {
             $additionalDomainControllerJobResult `
             -and ($additionalDomainControllerJobResult.Status -eq 'Success')
         ) {
-            $dcDeploymentSuccess = $dcDeploymentSuccess -and $true
+            $additionalDomainControllerDeploymentSuccess = `
+                $additionalDomainControllerDeploymentSuccess -and $true
             Write-Host $additionalDomainControllerJobResult.Message
         }
     
@@ -737,7 +739,7 @@ if ($additionalDomainControllerJob) {
             -not $additionalDomainControllerJobResult `
             -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
         ){
-            $dcDeploymentSuccess = $false
+            $additionalDomainControllerDeploymentSuccess = $false
             if ($additionalDomainControllerJobResult) {
                 Write-Error `
                     "Deployment failed with error: $(
@@ -758,7 +760,7 @@ Write-Host '    Exercise 3: Check domain controller health'
     
 Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
-if ($dcDeploymentSuccess ) {
+if ($additionalDomainControllerDeploymentSuccess ) {
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
    
     $domainControllers = 'vn1-srv5.ad.adatum.com', 'vn2-srv1.ad.adatum.com'
@@ -863,10 +865,10 @@ if ($dcDeploymentSuccess ) {
                     ) missing on DNS server $(
                         $dnsServer
                     )"
-                $dcDeploymentSuccess = $false
+                $additionalDomainControllerDeploymentSuccess = $false
             }
         }
-        if (-not $dcDeploymentSuccess) {
+        if (-not $additionalDomainControllerDeploymentSuccess) {
             break
         }
     }
@@ -878,7 +880,7 @@ if ($dcDeploymentSuccess ) {
 
 Write-Host '        Task 2: Verify shares for Active Directory'
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
     $name = 'NETLOGON', 'SYSVOL'
     Write-Verbose "Verify $name share on $computerName"
@@ -898,7 +900,7 @@ if ($dcDeploymentSuccess) {
         }
         if ($missingShares) {
             Write-Warning "$missingShareName share missing on $item"
-            $dcDeploymentSuccess = $false
+            $additionalDomainControllerDeploymentSuccess = $false
         }
     }
 }
@@ -918,7 +920,7 @@ Write-Host '    Exercise 4: Optimize DNS'
 
 Write-Host '        Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1'
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     foreach ($computerName in @(
         'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
     )) {
@@ -949,7 +951,7 @@ else {
 
 Write-Host '        Task 2: Configure DNS client settings'
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     $computerName = 'VN1-SRV5.ad.adatum.com'
     $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
     $psSession = Request-PSSession `
@@ -1000,7 +1002,7 @@ if ($dcDeploymentSuccess) {
 
 Write-Host '        Task 3: Configure forwarders on VN2-SRV2'
 
-if ($dcDeploymentSuccess) {
+if ($forestDeploymentSuccess) {
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.contoso
 
@@ -1031,7 +1033,7 @@ Write-Host '    Exercise 5: Transfer flexible single master operation roles'
 
 Write-Host '        Task 1: Transfer the domain-wide flexible single master operation roles'
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     $operationMasterRoles = 'RIDMaster', 'InfrastructureMaster', 'PDCEmulator'
     $domain = 'ad.adatum.com'
 
@@ -1068,7 +1070,7 @@ if ($dcDeploymentSuccess) {
 
 Write-Host '        Task 2: Transfer the forest-wide flexible single master operation roles'
 
-if ($dcDeploymentSuccess) {
+if ($additionalDomainControllerDeploymentSuccess) {
     $operationMasterRoles = 'SchemaMaster', 'DomainNamingMaster'
     $rootDomain = 'ad.adatum.com'
 
