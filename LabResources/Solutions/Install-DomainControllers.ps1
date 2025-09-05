@@ -218,7 +218,7 @@ function Start-ADDSInstallDomainControllerJob {
             )
         )
 
-    $plainDomainUsername = $DomainCredential.UserName
+    $domainUsername = $DomainCredential.UserName
     $plainDomainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
             $DomainCredential.Password
@@ -233,10 +233,14 @@ function Start-ADDSInstallDomainControllerJob {
                 -String $using:plainSafeModeAdministratorPasswordString `
                 -AsPlainText `
                 -Force
+            $domainPassword = ConvertTo-SecureString `
+                -String $using:plainDomainPassword `
+                -AsPlainText `
+                -Force
             $credential = New-Object `
                 -TypeName pscredential `
                 -ArgumentList `
-                    $using:plainDomainUsername, $using:plainDomainPassword
+                    $using:domainUsername, $domainPassword
             Install-ADDSDomainController `
                 -DomainName $using:DomainName `
                 -Credential $credential `
@@ -675,41 +679,59 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
     if ($dnsClientServerAddressConfigured) {
         $domainName = 'ad.contoso.com'
         $csDomain = (Get-ComputerInfo).CsDomain
+        $timeout = 600
+        $endDate = (Get-Date).AddSeconds($timeout)
         if ($csDomain -eq $domainName) {
             Write-Verbose "Computer is already a member of the domain $(
                 $domainName
             )"
         }
+
         if ($csDomain -ne $domainName) {
             $seconds = 10
-            while (
-                -not (
-                    Resolve-DnsName `
-                        -Type SRV `
-                        -Name "_kerberos._tcp.dc._msdcs.$domainName" `
-                        -ErrorAction SilentlyContinue
-                )
-            ) {
-                Write-Verbose `
-                    "Waiting $(
-                        $seconds
-                    ) seconds for domain $(
-                        $domainName
-                    ) to become available."
-                Start-Sleep -Seconds $seconds
-            }
+            $dnsRecord = $null
+            do {
+                $dnsRecord = Resolve-DnsName `
+                    -Type SRV `
+                    -Name "_ldap._tcp.dc._msdcs.$domainName" `
+                    -ErrorAction SilentlyContinue
+                $domainFound = `
+                    (
+                        Test-NetConnection `
+                            -ComputerName $dnsRecord.NameTarget `
+                            -Port 389
+                    ).TcpTestSucceeded
+                if (-not $domainFound) {
+                    Write-Verbose `
+                        "Domain $(
+                            $domainName
+                        ) not available yet. Waiting $(
+                            $seconds
+                        ) seconds before retrying until $(
+                            $endDate
+                        )."
+                    Start-Sleep -Seconds $seconds
+                }
+            } until ($domainFound -or (Get-Date) -gt $endDate)
         
-            Write-Verbose "Add the computer to the domain $domainName."
-            try {
-                Add-Computer `
-                    -DomainName $domainName `
-                    -Credential $adminCredential.contoso `
-                    -ErrorAction Stop
-                $domainJoinSuccess = $true        
-            }
-            catch {
+            if (-not $domainFound) {
+                Write-Error `
+                    "Domain $domainName not available. Skipping domain join."
                 $domainJoinSuccess = $false
-                Write-Error $error[0]
+            }
+            if ($domainFound) {
+                Write-Verbose "Add the computer to the domain $domainName."
+                try {
+                    Add-Computer `
+                        -DomainName $domainName `
+                        -Credential $adminCredential.contoso `
+                        -ErrorAction Stop
+                    $domainJoinSuccess = $true        
+                }
+                catch {
+                    $domainJoinSuccess = $false
+                    Write-Error $error[0]
+                }
             }
         }
     }
