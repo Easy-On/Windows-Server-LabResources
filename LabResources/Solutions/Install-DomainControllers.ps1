@@ -292,10 +292,11 @@ Write-Host '    Exercise 1: Deploy additional domain controllers'
 Write-Host `
     '        Task 1: Install the Remote Server Administration DNS Server Tools'
 
-& $PSScriptRoot\Install-RSATModule.ps1 `
-    -Name DNS `
-    -ComputerName CL1.ad.adatum.com `
-    -Credential $adminCredential.adatum
+$jobDnsServerTools = Start-Job `
+    -FilePath (
+        Join-Path -Path $PSScriptRoot -ChildPath 'Install-RSATModule.ps1'
+    ) `
+    -ArgumentList 'DNS', 'CL2.ad.adatum.com', $credential
 
 #endregion Task 1: Install the Remote Server Administration DNS Server Tools
 
@@ -506,8 +507,12 @@ $additionalDomainControllerJob | Wait-Job
 $additionalDomainControllerJobResult = `
     Receive-Job -Job $additionalDomainControllerJob
 
-if ($additionalDomainControllerJob -and ($jobResult.Status -eq 'Success')) {
+if (
+    $additionalDomainControllerJobResult `
+    -and ($additionalDomainControllerJobResult.Status -eq 'Success')
+) {
     $dcDeploymentSuccess = $true
+    Write-Host $additionalDomainControllerJobResult.Message
 }
 
 if (
@@ -568,6 +573,7 @@ $newForestJobResult = `
 
 if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
     $dcDeploymentSuccess = $true
+    Write-Host $newForestJobResult.Message
 }
 
 if (
@@ -699,6 +705,7 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
 if ($additionalDomainControllerJob) {
     $additionalDomainControllerJob | ForEach-Object {
         $PSItem | Wait-Job
+        $additionalDomainControllerJobResult = $null
         $additionalDomainControllerJobResult = `
             Receive-Job -Job $PSItem
     
@@ -707,6 +714,7 @@ if ($additionalDomainControllerJob) {
             -and ($additionalDomainControllerJobResult.Status -eq 'Success')
         ) {
             $dcDeploymentSuccess = $dcDeploymentSuccess -and $true
+            Write-Host $additionalDomainControllerJobResult.Message
         }
     
         if (
@@ -1079,6 +1087,14 @@ else {
 
 
 Get-PSSession | Remove-PSSession
+
+# Wait for DNS server tools installation job to complete
+Write-Verbose 'Waiting for DNS server tools installation job to complete'
+$jobDnsServerTools | Wait-Job
+$jobDnsServerToolsResult = Receive-Job -Job $jobDnsServerTools
+if ($jobDnsServerToolsResult) {
+    Write-Host $jobDnsServerToolsResult.Message
+}
 
 Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
 $endDate = Get-Date
