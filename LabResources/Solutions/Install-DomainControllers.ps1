@@ -265,7 +265,7 @@ $trustedHosts = Get-Item -Path $trustedHostsPath
 Set-Item `
     -Path $trustedHostsPath `
     -Value `
-        'VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com, VN2-SRV2.ad.adatum.com, CL1.ad.adatum.com, 10.1.2.16' `
+        'VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com, VN2-SRV2.ad.adatum.com, CL1.ad.adatum.com, 10.1.1.40, 10.1.2.8, 10.1.2.16' `
     -Force
 
 <#
@@ -799,17 +799,16 @@ Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
 if ($additionalDomainControllerDeploymentSuccess ) {
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
-   
-    $domainControllers = 'vn1-srv5.ad.adatum.com', 'vn2-srv1.ad.adatum.com'
+    $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
     $timeout = 600 # timeout in seconds
 
     $expectedDNSRecords = Invoke-Command `
-        -ComputerName $domainControllers -ScriptBlock {
+        -ComputerName $computerName -ScriptBlock {
             Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
         }
 
     Write-Verbose "Waiting for DNS SRV records for Domain Controllers $(
-        $domainControllers -join ', '
+        $computerName -join ', '
     ) to be available on $(
         $dnsServers -join ', '
     )"
@@ -918,7 +917,7 @@ if ($additionalDomainControllerDeploymentSuccess ) {
 Write-Host '        Task 2: Verify shares for Active Directory'
 
 if ($additionalDomainControllerDeploymentSuccess) {
-    $computerName = 'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+    $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
     $name = 'NETLOGON', 'SYSVOL'
     Write-Verbose "Verify $name share on $computerName"
     $psSession = Request-PSSession `
@@ -959,7 +958,7 @@ Write-Host '        Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1'
 
 if ($additionalDomainControllerDeploymentSuccess) {
     foreach ($computerName in @(
-        'VN1-SRV5.ad.adatum.com', 'VN2-SRV1.ad.adatum.com'
+        '10.1.1.40', '10.1.2.8' # VN1-SRV5, VN2-SRV1
     )) {
         $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
@@ -989,7 +988,7 @@ else {
 Write-Host '        Task 2: Configure DNS client settings'
 
 if ($additionalDomainControllerDeploymentSuccess) {
-    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $computerName = '10.1.1.40' # VN1-SRV5
     $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
@@ -1039,6 +1038,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
 
 Write-Host '        Task 3: Configure forwarders on VN2-SRV2'
 
+$computerName = '10.1.2.8' # VN2-SRV2
 if ($forestDeploymentSuccess) {
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.contoso
@@ -1077,7 +1077,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
     # FQDN of the server to receive the FSMO roles
     $identity = 'vn1-srv5'
 
-    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $computerName = '10.1.1.40' # VN1-SRV5
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     
@@ -1114,7 +1114,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
     # FQDN of the server to receive the FSMO roles
     $identity = 'vn1-srv5'
 
-    $computerName = 'VN1-SRV5.ad.adatum.com'
+    $computerName = '10.1.1.40' # VN1-SRV5
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
     Write-Verbose 'Get the properties of the AD forest.'
