@@ -494,25 +494,6 @@ if ($aDDSfeatureInstalled) {
                 -InstallDns `
                 -Force
         }
-        $psSession | Remove-PSSession
-    
-            $job | Wait-Job
-            $jobResult = Receive-Job -Job $job
-    
-            if ($jobResult -and $jobResult.Status -eq 'Success') {
-                $dcDeploymentSuccess = $true
-            } else {
-                $dcDeploymentSuccess = $false
-                if ($jobResult) {
-                    Write-Error $jobResult.Message
-                }
-            }
-    
-            Wait-WSMan `
-                -ComputerName $computerName `
-                -Authentication Default `
-                -Credential $adminCredential.contoso `
-                -Timeout 600
     }
 }
 
