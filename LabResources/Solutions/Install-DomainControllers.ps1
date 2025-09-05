@@ -292,11 +292,13 @@ Write-Host '    Exercise 1: Deploy additional domain controllers'
 Write-Host `
     '        Task 1: Install the Remote Server Administration DNS Server Tools'
 
-$jobDnsServerTools = Start-Job `
-    -FilePath (
+$jobDnsServerTools = & (
         Join-Path -Path $PSScriptRoot -ChildPath 'Install-RSATModule.ps1'
     ) `
-    -ArgumentList 'DNS', 'CL1.ad.adatum.com', $credential
+    -Name 'DNS' `
+    -ComputerName 'CL1.ad.adatum.com' `
+    -Credential $credential `
+    -AsJob
 
 #endregion Task 1: Install the Remote Server Administration DNS Server Tools
 
@@ -576,7 +578,9 @@ Write-Verbose `
         $newForestJob.Location
     ) as domain controller in a new forest to complete"
 
-$newForestJobResult = $newForestJob | Wait-Job | Receive-Job
+if ($newForestJob) {
+    $newForestJobResult = $newForestJob | Wait-Job | Receive-Job
+}
 
 if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
     $dcDeploymentSuccess = $true
@@ -1103,18 +1107,33 @@ Get-PSSession | Remove-PSSession
 # Wait for DNS server tools installation job to complete
 Write-Verbose 'Waiting for DNS server tools installation job to complete'
 $jobDnsServerToolsResult = $jobDnsServerTools | Wait-Job | Receive-Job
+
+# Do we need to restart the local computer?
 if ($jobDnsServerToolsResult) {
-    Write-Host $jobDnsServerToolsResult.Message
+    if (
+        $jobDnsServerToolsResult.RestartNeeded -eq $true `
+        -or $jobDnsServerToolsResult.RestartNeeded -eq 'Yes' `
+        -and $env:COMPUTERNAME -eq 'CL1'
+    ) {
+        $restartNeeded = $true
+    }
 }
+
+# CL3 may need a restart at the end to complete domain join
+
+if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
+    $restartNeeded = $true
+}
+
+# Clean up
 
 Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
 $endDate = Get-Date
 $timeElapsed = $endDate - $startDate
 Write-Verbose "Time elapsed: $timeElapsed"
 
-# CL3 may need a restart at the end to complete domain join
 
-if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
+if ($restartNeeded) {
     Write-Host 'The local computer needs a restart'
     Read-Host 'Press ENTER to restart'
     Restart-Computer

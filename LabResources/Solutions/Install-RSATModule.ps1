@@ -6,7 +6,9 @@ param (
     [string]
     $ComputerName = $env:COMPUTERNAME,
     [pscredential]
-    $Credential
+    $Credential,
+    [switch]
+    $AsJob
 )
 
 $features = @(
@@ -69,6 +71,11 @@ foreach ($moduleName in $Name) {
                 # Check for local invocation
                 if ($env:COMPUTERNAME -eq $hostName) {
                     Write-Verbose "Install $Name on $ComputerName"
+                    $job = Start-Job `
+                        -ScriptBlock { 
+                            Add-WindowsCapability `
+                                -Online -Name $using:feature.CapabilityName 
+                        }
                     $restartNeeded = $restartNeeded -or (
                         $windowsCapability | Add-WindowsCapability -Online
                     ).RestartNeeded
@@ -97,8 +104,8 @@ Please run $($MyInvocation.MyCommand) on $computerName.
                 if ($windowsFeature) {
                     Write-Verbose `
                         "Install $($windowsFeature.Name) on $ComputerName"
-                    $featureOperationResult = Invoke-Command  `
-                        -Session $psSession -ScriptBlock {
+                    $job = Invoke-Command  `
+                        -Session $psSession -ScriptBlock -AsJob {
                             param ($windowsFeature)
                             $windowsFeature |
                             Install-WindowsFeature -Restart
@@ -106,49 +113,53 @@ Please run $($MyInvocation.MyCommand) on $computerName.
                         -ArgumentList $windowsFeature
                 }
             }
-
-            if ($featureOperationResult) {
-                if (-not $featureOperationResult.Success) {
-                    Write-Warning "Feature $(
-                        $feature.FeatureName
-                    ) could not be installed."
-                }
-
-                # If executed on local computer, postpone restart
-
-                $restartNeeded = $hostName -eq $env:COMPUTERNAME `
-                    -and $featureOperationResult.RestartNeeded -eq 'Yes'
-
-                # Remote computers start automatically, just wait for it
-
-                if (
-                    -not $restartNeeded `
-                    -and $featureOperationResult.RestartNeeded -eq 'Yes'
-                ) {
-                    Restart-Computer -ComputerName $ComputerName -Protocol WSMan
-                    do {
-                        Write-Warning `
-                            "Waiting for $ComputerName to become available"
-                    } until (
-                        Test-WSMan `
-                            -$remotingParameters `
-                            -ErrorAction SilentlyContinue
-                    )
-                }
-                $restartNeeded = $false         
-            }
         }
     }
 }
 
 $psSession | Remove-PSSession
 
-if ($restartNeeded) {
-    Write-Host @"
+if (-not $AsJob) {
+    $jobResult = $job | Wait-Job | Receive-Job
+    if ($jobResult) {
+        if (
+            $jobResult.RestartNeeded -eq 'Yes' `
+            -or $jobResult.RestartNeeded -eq $true
+        ) {
+            $restartNeeded = $true
+        }
+    }
+    if ($jobResult.Success -eq $false) {
+        Write-Error "Feature $($feature.FeatureName) could not be installed."
+    }
+    if ($restartNeeded) {
+        if ($hostName -eq $env:COMPUTERNAME) {
+            Write-Host @"
 The local computer needs a restart.
 After the restart, please run $($MyInvocation.ScriptName) again.
 "@
-    Read-Host 'Press Enter to restart now'
-    Restart-Computer
-    exit
+            Read-Host 'Press Enter to restart now'
+            Restart-Computer
+            exit
+        }
+        if ($hostName -ne $env:COMPUTERNAME) {
+            Restart-Computer `
+                -ComputerName $ComputerName `
+                -Protocol WSMan `
+                -Credential $Credential
+                do {
+                    Write-Warning `
+                        "Waiting for $ComputerName to become available"
+                } until (
+                    Test-WSMan `
+                        -$remotingParameters `
+                        -ErrorAction SilentlyContinue
+                )
+        }
+    }
 }
+
+if ($AsJob) {
+    return $job
+}
+
