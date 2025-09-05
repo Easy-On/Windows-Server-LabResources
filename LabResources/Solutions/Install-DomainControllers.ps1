@@ -551,6 +551,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
 
     Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
 
+    $additionalDomainControllerDeploymentSuccess = $false
     $additionalDomainControllerJob = $null
     $additionalDomainControllerJob =  `
         $additionalDomainController[
@@ -565,7 +566,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
                         $domainName
                     )"
                 Start-ADDSInstallDomainControllerJob `
-                    -ComputerName $PSItem `
+                    -ComputerName "$PSItem.ad.adatum.com" `
                     -Credential $adminCredential.adatum `
                     -DomainName $domainName `
                     -SafeModeAdministratorPassword $defaultSecurePassword `
@@ -720,35 +721,38 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
 
 #region Wait for additional domain controllers to be deployed
 
-if ($additionalDomainControllerJob) {
-    $additionalDomainControllerJob | ForEach-Object {
-        Write-Verbose `
-            "Waiting for the configuration of $(
-                $PSItem.Location
-            ) as additional domain controller to complete"
+if (-not $additionalDomainControllerDeploymentSuccess) {
+    if ($additionalDomainControllerJob) {
+        $additionalDomainControllerJob | ForEach-Object {
+            Write-Verbose `
+                "Waiting for the configuration of $(
+                    $PSItem.Location
+                ) as additional domain controller to complete"
 
-        $additionalDomainControllerJobResult = $null
-        $additionalDomainControllerJobResult = $PSItem | Wait-Job | Receive-Job
-    
-        if (
-            $additionalDomainControllerJobResult `
-            -and ($additionalDomainControllerJobResult.Status -eq 'Success')
-        ) {
-            $additionalDomainControllerDeploymentSuccess = `
-                $additionalDomainControllerDeploymentSuccess -and $true
-            Write-Host $additionalDomainControllerJobResult.Message
-        }
-    
-        if (
-            -not $additionalDomainControllerJobResult `
-            -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
-        ){
-            $additionalDomainControllerDeploymentSuccess = $false
-            if ($additionalDomainControllerJobResult) {
-                Write-Error `
-                    "Deployment failed with error: $(
-                        $additionalDomainControllerJobResult.Message
-                    )"
+            $additionalDomainControllerJobResult = $null
+            $additionalDomainControllerJobResult = `
+                $PSItem | Wait-Job | Receive-Job
+        
+            if (
+                $additionalDomainControllerJobResult `
+                -and ($additionalDomainControllerJobResult.Status -eq 'Success')
+            ) {
+                $additionalDomainControllerDeploymentSuccess = `
+                    $additionalDomainControllerDeploymentSuccess -and $true
+                Write-Host $additionalDomainControllerJobResult.Message
+            }
+        
+            if (
+                -not $additionalDomainControllerJobResult `
+                -or $additionalDomainControllerJobResult.Status -ne 'Success'
+            ){
+                $additionalDomainControllerDeploymentSuccess = $false
+                if ($additionalDomainControllerJobResult) {
+                    Write-Error `
+                        "Deployment failed with error: $(
+                            $additionalDomainControllerJobResult.Message
+                        )"
+                }
             }
         }
     }
