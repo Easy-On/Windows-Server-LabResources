@@ -296,7 +296,7 @@ $jobDnsServerTools = Start-Job `
     -FilePath (
         Join-Path -Path $PSScriptRoot -ChildPath 'Install-RSATModule.ps1'
     ) `
-    -ArgumentList 'DNS', 'CL2.ad.adatum.com', $credential
+    -ArgumentList 'DNS', 'CL1.ad.adatum.com', $credential
 
 #endregion Task 1: Install the Remote Server Administration DNS Server Tools
 
