@@ -503,9 +503,13 @@ if ($aDDSfeatureInstalled) {
 #endregion Exercise 2: Deploy a new forest
 
 #region Wait for first additional domain controller to be deployed
-$additionalDomainControllerJob | Wait-Job
-$additionalDomainControllerJobResult = `
-    Receive-Job -Job $additionalDomainControllerJob
+Write-Verbose `
+    "Waiting for the configuration of $(
+        $additionalDomainControllerJob.Location
+    ) as additional domain controller to complete"
+$additionalDomainControllerJobResult = $additionalDomainControllerJob |
+    Wait-Job | 
+    Receive-Job
 
 if (
     $additionalDomainControllerJobResult `
@@ -567,9 +571,12 @@ if ($dcDeploymentSuccess) {
 
 #region Wait for forest to be deployed
 
-$newForestJob | Wait-Job
-$newForestJobResult = `
-    Receive-Job -Job $newForestJob
+Write-Verbose `
+    "Waiting for the configuration of $(
+        $newForestJob.Location
+    ) as domain controller in a new forest to complete"
+
+$newForestJobResult = $newForestJob | Wait-Job | Receive-Job
 
 if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
     $dcDeploymentSuccess = $true
@@ -668,7 +675,9 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
             while (
                 -not (
                     Resolve-DnsName `
-                        -Type SRV -Name "_kerberos._tcp.dc._msdcs.$domainName"
+                        -Type SRV `
+                        -Name "_kerberos._tcp.dc._msdcs.$domainName" `
+                        -ErrorAction SilentlyContinue
                 )
             ) {
                 Write-Verbose `
@@ -704,10 +713,13 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $dcDeploymentSuccess) {
 
 if ($additionalDomainControllerJob) {
     $additionalDomainControllerJob | ForEach-Object {
-        $PSItem | Wait-Job
+        Write-Verbose `
+            "Waiting for the configuration of $(
+                $PSItem.Location
+            ) as additional domain controller to complete"
+
         $additionalDomainControllerJobResult = $null
-        $additionalDomainControllerJobResult = `
-            Receive-Job -Job $PSItem
+        $additionalDomainControllerJobResult = $PSItem | Wait-Job | Receive-Job
     
         if (
             $additionalDomainControllerJobResult `
@@ -1090,8 +1102,7 @@ Get-PSSession | Remove-PSSession
 
 # Wait for DNS server tools installation job to complete
 Write-Verbose 'Waiting for DNS server tools installation job to complete'
-$jobDnsServerTools | Wait-Job
-$jobDnsServerToolsResult = Receive-Job -Job $jobDnsServerTools
+$jobDnsServerToolsResult = $jobDnsServerTools | Wait-Job | Receive-Job
 if ($jobDnsServerToolsResult) {
     Write-Host $jobDnsServerToolsResult.Message
 }
