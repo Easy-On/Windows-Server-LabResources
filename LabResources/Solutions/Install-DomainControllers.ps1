@@ -297,7 +297,7 @@ $jobDnsServerTools = & (
     ) `
     -Name 'DNS' `
     -ComputerName 'CL1.ad.adatum.com' `
-    -Credential $credential.adatum `
+    -Credential $adminCredential.adatum `
     -AsJob
 
 #endregion Task 1: Install the Remote Server Administration DNS Server Tools
