@@ -364,7 +364,7 @@ if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
 
-    Write-Verbose 'Getting existing domain controller'
+    Write-Verbose 'Getting existing domain controllers'
     $aDDomainController = Invoke-Command -Session $psSession -ScriptBlock {
         $securePassword = ConvertTo-SecureString `
             -String $using:defaultPassword -AsPlainText -Force
