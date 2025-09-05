@@ -396,7 +396,8 @@ if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
             )"
         $additionalDomainControllerJob = `
             Start-ADDSInstallDomainControllerJob `
-                -ComputerName $additionalDomainController[0] `
+                -ComputerName `
+                    "$($additionalDomainController[0]).ad.adatum.com" `
                 -Credential $adminCredential.adatum `
                 -DomainName $domainName `
                 -SafeModeAdministratorPassword $defaultSecurePassword `
@@ -528,9 +529,12 @@ if ($additionalDomainControllerJob -and ($jobResult.Status -eq 'Success')) {
     $dcDeploymentSuccess = $true
 }
 
-if (-not $jobResult -or -not ($jobResult.Status -eq 'Success')){
+if (
+    -not $additionalDomainControllerJobResult `
+    -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
+){
     $dcDeploymentSuccess = $false
-    if ($jobResult) {
+    if ($additionalDomainControllerJobResult) {
         Write-Error `
             "Deployment of $(
                 $additionalDomainController[0]
@@ -581,7 +585,7 @@ $newForestJob | Wait-Job
 $newForestJobResult = `
     Receive-Job -Job $newForestJob
 
-if ($newForestJob -and ($newForestJobResult.Status -eq 'Success')) {
+if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
     $dcDeploymentSuccess = $true
 }
 
@@ -721,7 +725,7 @@ if ($additionalDomainControllerJob) {
             $additionalDomainControllerJobResult `
             -and ($additionalDomainControllerJobResult.Status -eq 'Success')
         ) {
-            $dcDeploymentSuccess = $true
+            $dcDeploymentSuccess = $dcDeploymentSuccess -and $true
         }
     
         if (
