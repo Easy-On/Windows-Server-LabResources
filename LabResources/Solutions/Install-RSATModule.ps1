@@ -59,9 +59,11 @@ foreach ($moduleName in $Name) {
 
             $windowsCapability = Invoke-Command `
                 -Session $psSession -ScriptBlock {
+                    param($name)
                     Get-WindowsCapability `
-                        -Online -Name $using:feature.CapabilityName
-                }
+                        -Online -Name $name
+                } `
+                -ArgumentList $feature.CapabilityName
 
             if ($windowsCapability.State -ne 'Installed') {
                 # Check for local invocation
@@ -85,19 +87,23 @@ Please run $($MyInvocation.MyCommand) on $computerName.
             if ($psSession) {
                 $windowsFeature = Invoke-Command `
                     -Session $psSession -ScriptBlock {
+                        param ($name)
                         Get-WindowsFeature `
-                            -Name $using:feature.FeatureName |
+                            -Name $name |
                         Where-Object { $PSItem.InstallState -ne 'Installed' }
-                    }
+                    } `
+                    -ArgumentList $feature.FeatureName
 
                 if ($windowsFeature) {
                     Write-Verbose `
                         "Install $($windowsFeature.Name) on $ComputerName"
                     $featureOperationResult = Invoke-Command  `
                         -Session $psSession -ScriptBlock {
-                            $using:windowsFeature |
+                            param ($windowsFeature)
+                            $windowsFeature |
                             Install-WindowsFeature -Restart
-                        }
+                        } `
+                        -ArgumentList $windowsFeature
                 }
             }
 
