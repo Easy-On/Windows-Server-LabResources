@@ -37,6 +37,7 @@ $features = @(
 $hostName = ($ComputerName -split '\.')[0]
 $remotingParameters = $PSBoundParameters
 $null = $remotingParameters.Remove('Name')
+$null = $remotingParameters.Remove('AsJob')
 $psSession = New-PSSession @remotingParameters
 
 
