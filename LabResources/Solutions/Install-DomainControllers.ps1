@@ -244,7 +244,6 @@ function Start-ADDSInstallDomainControllerJob {
                     $safeModeAdministratorPassword `
                 -Force
             }
-    $psSession | Remove-PSSession
     return $job
 }
 #endregion Helper functions
@@ -506,38 +505,41 @@ if ($aDDSfeatureInstalled) {
 
 #region Wait for first additional domain controller to be deployed
 
-if ($additionalDomainControllerJob) {
-    Write-Verbose `
-        "Waiting for the configuration of $(
-            $additionalDomainControllerJob.Location
-        ) as additional domain controller to complete"
-    $additionalDomainControllerJobResult = $additionalDomainControllerJob |
-        Wait-Job | 
-        Receive-Job
-}
+if (-not $additionalDomainControllerDeploymentSuccess) {
+    if ($additionalDomainControllerJob) {
+        Write-Verbose `
+            "Waiting for the configuration of $(
+                $additionalDomainControllerJob.Location
+            ) as additional domain controller to complete"
+        $additionalDomainControllerJobResult = $additionalDomainControllerJob |
+            Wait-Job | 
+            Receive-Job
+    }
 
-if (
-    $additionalDomainControllerJobResult `
-    -and ($additionalDomainControllerJobResult.Status -eq 'Success')
-) {
-    $additionalDomainControllerDeploymentSuccess = $true
-    Write-Host $additionalDomainControllerJobResult.Message
-}
+    if (
+        $additionalDomainControllerJobResult `
+        -and ($additionalDomainControllerJobResult.Status -eq 'Success')
+    ) {
+        $additionalDomainControllerDeploymentSuccess = $true
+        Write-Host $additionalDomainControllerJobResult.Message
+    }
 
-if (
-    -not $additionalDomainControllerJobResult `
-    -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
-){
-    $additionalDomainControllerDeploymentSuccess = $false
-    if ($additionalDomainControllerJobResult) {
-        Write-Error `
-            "Deployment of $(
-                $additionalDomainController[0]
-            ) failed with error: $(
-                $additionalDomainControllerJobResult.Message
-            )"
+    if (
+        -not $additionalDomainControllerJobResult `
+        -or -not ($additionalDomainControllerJobResult.Status -eq 'Success')
+    ){
+        $additionalDomainControllerDeploymentSuccess = $false
+        if ($additionalDomainControllerJobResult) {
+            Write-Error `
+                "Deployment of $(
+                    $additionalDomainController[0]
+                ) failed with error: $(
+                    $additionalDomainControllerJobResult.Message
+                )"
+        }
     }
 }
+
 #endregion Wait for first additional domain controller to be deployed
 
 if ($additionalDomainControllerDeploymentSuccess) {
@@ -572,37 +574,39 @@ if ($additionalDomainControllerDeploymentSuccess) {
         }
 
     #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+    #endregion Exercise 1: Deploy additional domain controllers
 }
 
-#region Wait for forest to be deployed
+if (-not $forestDeploymentSuccess) {
+    #region Wait for forest to be deployed
 
-Write-Verbose `
-    "Waiting for the configuration of $(
-        $newForestJob.Location
-    ) as domain controller in a new forest to complete"
+    Write-Verbose `
+        "Waiting for the configuration of $(
+            $newForestJob.Location
+        ) as domain controller in a new forest to complete"
 
-if ($newForestJob) {
-    $newForestJobResult = $newForestJob | Wait-Job | Receive-Job
-}
-
-if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
-    $forestDeploymentSuccess = $true
-    Write-Host $newForestJobResult.Message
-}
-
-if (-not $newForestJobResult -or $newForestJobResult.Status -ne 'Success') {
-    $forestDeploymentSuccess = $false
-    if ($newForestJobResult) {
-        Write-Error `
-            "Deployment of $(
-                $additionalDomainController[0]
-            ) failed with error: $(
-                $newForestJobResult.Message
-            )"
+    if ($newForestJob) {
+        $newForestJobResult = $newForestJob | Wait-Job | Receive-Job
     }
-}
 
-#endregion Wait for forest to be deployed
+    if ($newForestJobResult -and ($newForestJobResult.Status -eq 'Success')) {
+        $forestDeploymentSuccess = $true
+        Write-Host $newForestJobResult.Message
+    }
+
+    if (-not $newForestJobResult -or $newForestJobResult.Status -ne 'Success') {
+        $forestDeploymentSuccess = $false
+        if ($newForestJobResult) {
+            Write-Error `
+                "Deployment of $(
+                    $additionalDomainController[0]
+                ) failed with error: $(
+                    $newForestJobResult.Message
+                )"
+        }
+    }
+    #endregion Wait for forest to be deployed
+}
 
 #region Exercise 3: Join client to new forest
 
