@@ -698,16 +698,19 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
             $seconds = 10
             $dnsRecord = $null
             do {
+                $domainFound = $false
                 $dnsRecord = Resolve-DnsName `
                     -Type SRV `
                     -Name "_ldap._tcp.dc._msdcs.$domainName" `
                     -ErrorAction SilentlyContinue
-                $domainFound = `
-                    (
-                        Test-NetConnection `
-                            -ComputerName $dnsRecord.NameTarget `
-                            -Port 389
-                    ).TcpTestSucceeded
+                if ($dnsRecord) {
+                    $domainFound = `
+                        (
+                            Test-NetConnection `
+                                -ComputerName $dnsRecord.NameTarget `
+                                -Port 389
+                        ).TcpTestSucceeded
+                }
                 if (-not $domainFound) {
                     Write-Verbose `
                         "Domain $(
