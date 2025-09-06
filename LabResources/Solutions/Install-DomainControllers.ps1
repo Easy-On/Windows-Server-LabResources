@@ -546,15 +546,15 @@ if (-not $additionalDomainControllerDeploymentSuccess) {
 
 #endregion Wait for first additional domain controller to be deployed
 
+#region Exercise 1: Deploy additional domain controllers
+
+Write-Host '    Exercise 1: Deploy additional domain controllers'
+
+#region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+
+Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
+
 if ($additionalDomainControllerDeploymentSuccess) {
-    #region Exercise 1: Deploy additional domain controllers
-
-    Write-Host '    Exercise 1: Deploy additional domain controllers'
-
-    #region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
-
-    Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
-
     $additionalDomainControllerDeploymentSuccess = $false
     $additionalDomainControllerJob = $null
     $moreDomainControllersToDeploy = `
@@ -568,8 +568,9 @@ if ($additionalDomainControllerDeploymentSuccess) {
         $additionalDomainControllerDeploymentSuccess = $true
     }
     if ($moreDomainControllersToDeploy) {
+        $domainName = 'ad.adatum.com'
         $additionalDomainControllerJob =  `
-            $moreDomainControllersToDeploy|
+            $moreDomainControllersToDeploy |
             ForEach-Object {
                 Write-Verbose `
                     "Promoting $(
@@ -585,12 +586,18 @@ if ($additionalDomainControllerDeploymentSuccess) {
                     -DomainCredential $adminCredential.adatum
             }
     }
-    #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
-    #endregion Exercise 1: Deploy additional domain controllers
 }
 
+#endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+#endregion Exercise 1: Deploy additional domain controllers
+
+#region Exercise 3: Join client to new forest
+
+Write-Host '    Exercise 3: Join client to new forest'
+
+#region Wait for forest to be deployed
+
 if (-not $forestDeploymentSuccess) {
-    #region Wait for forest to be deployed
 
     Write-Verbose `
         "Waiting for the configuration of $(
@@ -617,12 +624,9 @@ if (-not $forestDeploymentSuccess) {
                 )"
         }
     }
-    #endregion Wait for forest to be deployed
 }
 
-#region Exercise 3: Join client to new forest
-
-Write-Host '    Exercise 3: Join client to new forest'
+#endregion Wait for forest to be deployed
 
 #region Task 1: Change the DNS client settings
 
@@ -730,16 +734,34 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
                 $domainJoinSuccess = $false
             }
             if ($domainFound) {
+                $timeout = 600
+                $seconds = 30
+                $endDate = (Get-Date).AddSeconds($timeout)
                 Write-Verbose "Add the computer to the domain $domainName."
-                try {
-                    Add-Computer `
-                        -DomainName $domainName `
-                        -Credential $adminCredential.contoso `
-                        -ErrorAction Stop
-                    $domainJoinSuccess = $true        
-                }
-                catch {
-                    $domainJoinSuccess = $false
+                do {
+                    try {
+                        Add-Computer `
+                            -DomainName $domainName `
+                            -Credential $adminCredential.contoso `
+                            -ErrorAction Stop
+                        $domainJoinSuccess = $true        
+                    }
+                    catch {
+                        Write-Verbose `
+                            "Joining domain $(
+                                $domainName
+                            ) failed. Waiting $(
+                                $seconds
+                            ) seconds before retrying until $(
+                                $endDate
+                            )."
+                        $domainJoinSuccess = $false
+                        Start-Sleep -Seconds 30
+                    }
+                } until (
+                    $domainJoinSuccess -or (Get-Date) -gt $endDate
+                )
+                if (-not $domainJoinSuccess) {
                     Write-Error $error[0]
                 }
             }
