@@ -817,14 +817,8 @@ if ($additionalDomainControllerDeploymentSuccess ) {
             Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
         }
 
-    Write-Verbose "Waiting for DNS SRV records for Domain Controllers $(
-        $computerName -join ', '
-    ) to be available on $(
-        $dnsServers -join ', '
-    )"
     # Query each DNS server
     foreach ($server in $dnsServers) {
-
         # Go through the list of all expected DNS records line by line
         foreach ($expectedDNSRecord in $expectedDNSRecords) {
 
@@ -856,7 +850,7 @@ if ($additionalDomainControllerDeploymentSuccess ) {
                 ) pointing to $(
                     $target
                 ) on DNS server $(
-                    $dnsServer
+                    $server
                 ) until $(
                     $endDate
                 )"
