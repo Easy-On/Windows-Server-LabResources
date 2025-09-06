@@ -809,8 +809,11 @@ if ($additionalDomainControllerDeploymentSuccess ) {
     $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
     $timeout = 600 # timeout in seconds
 
+    $psSession = Request-PSSession `
+        -ComputerName $computerName -Credential $adminCredential.adatum
+
     $expectedDNSRecords = Invoke-Command `
-        -ComputerName $computerName -ScriptBlock {
+        -Session $psSession -ScriptBlock {
             Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
         }
 
