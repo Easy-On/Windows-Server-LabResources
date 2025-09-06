@@ -807,7 +807,7 @@ if (-not $additionalDomainControllerDeploymentSuccess) {
 if ($additionalDomainControllerDeploymentSuccess ) {
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
     $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
-    $timeout = 600 # timeout in seconds
+    $timeout = 1200 # timeout in seconds
 
     $psSession = Request-PSSession `
         -ComputerName $computerName -Credential $adminCredential.adatum
