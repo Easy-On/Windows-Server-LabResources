@@ -800,6 +800,10 @@ Write-Host '    Exercise 3: Check domain controller health'
     
 Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
+if (-not $additionalDomainControllerDeploymentSuccess) {
+    Write-Error 'Additional domain controllers not deployed, skipping task.'
+}
+
 if ($additionalDomainControllerDeploymentSuccess ) {
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
     $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
