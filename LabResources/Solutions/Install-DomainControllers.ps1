@@ -777,6 +777,7 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
 
 if (-not $additionalDomainControllerDeploymentSuccess) {
     if ($additionalDomainControllerJob) {
+        $additionalDomainControllerDeploymentSuccess = $true
         $additionalDomainControllerJob | ForEach-Object {
             Write-Verbose `
                 "Waiting for the configuration of $(
