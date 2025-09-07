@@ -250,6 +250,40 @@ function Start-ADDSInstallDomainControllerJob {
             }
     return $job
 }
+
+function Set-NetFirewallRemoteAdministrationAny {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]
+        $ComputerName,
+        [Parameter(Mandatory)]
+        [pscredential]
+        $Credential
+    )
+
+    $psSession = Request-PSSession `
+        -ComputerName $ComputerName `
+        -Credential $Credential `
+        -ErrorAction Stop
+
+    $netFirewallAddressFilter = Invoke-Command -Session $psSession -ScriptBlock {
+        Get-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC | 
+        Get-NetFirewallAddressFilter
+    }
+
+    if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
+        Write-Verbose `
+            "Configuring the firewall on $(
+                $ComputerName
+            ) to allow remote administration from different subnet"
+        Invoke-Command -Session $psSession -ScriptBlock {
+            $using:netFirewallAddressFilter |
+            Set-NetFirewallAddressFilter -RemoteAddress Any
+        }
+    }
+}
+
 #endregion Helper functions
 
 #region Prerequisites
@@ -400,6 +434,10 @@ if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
             ) as additional domain controller in $(
                 $domainName
             )"
+        Set-NetFirewallRemoteAdministrationAny `
+            -ComputerName "$($additionalDomainController[0]).ad.adatum.com" `
+            -Credential $adminCredential.adatum
+
         $additionalDomainControllerJob = `
             Start-ADDSInstallDomainControllerJob `
                 -ComputerName `
@@ -412,6 +450,7 @@ if ($networkAdaptersDisabled -and $aDDSfeatureInstalled) {
 }
 
 #endregion Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+
 #endregion Exercise 1: Deploy additional domain controllers
 
 
@@ -437,26 +476,13 @@ $aDDSfeatureInstalled = Install-ADDSFeature `
 Write-Host '        Task 2: Configure Active Directory Domain Services as new forest'
 
 $computerName = '10.1.2.16' # VN2-SRV2
+
+Set-NetFirewallRemoteAdministrationAny `
+    -ComputerName $computerName `
+    -Credential $adminCredential.local
+
 $psSession = Request-PSSession `
     -ComputerName $computerName -Credential $adminCredential.local
-
-
-#region Configure the firewall to allow remote administration from different subnet
-
-$netFirewallAddressFilter = Invoke-Command -Session $psSession -ScriptBlock {
-    Get-NetFirewallRule -Name WINRM-HTTP-In-TCP-PUBLIC | 
-    Get-NetFirewallAddressFilter
-}
-
-if ($netFirewallAddressFilter.RemoteIP -ne 'Any') {
-    Write-Verbose 'Configure the firewall to allow remote administration from different subnet'
-    Invoke-Command -Session $psSession -ScriptBlock {
-        $using:netFirewallAddressFilter |
-        Set-NetFirewallAddressFilter -RemoteAddress Any
-    }
-}
-
-#endregion Configure the firewall to allow remote administration from different subnet
 
 # Install new forest
 
@@ -507,6 +533,14 @@ if ($aDDSfeatureInstalled) {
 
 #endregion Exercise 2: Deploy a new forest
 
+#region Exercise 1: Deploy additional domain controllers
+
+Write-Host '    Exercise 1: Deploy additional domain controllers'
+
+#region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
+
+Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
+
 #region Wait for first additional domain controller to be deployed
 
 if (-not $additionalDomainControllerDeploymentSuccess) {
@@ -546,14 +580,6 @@ if (-not $additionalDomainControllerDeploymentSuccess) {
 
 #endregion Wait for first additional domain controller to be deployed
 
-#region Exercise 1: Deploy additional domain controllers
-
-Write-Host '    Exercise 1: Deploy additional domain controllers'
-
-#region Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain
-
-Write-Host '        Task 4: Configure Active Directory Domain Services as an additional domain controller in an existing domain'
-
 if ($additionalDomainControllerDeploymentSuccess) {
     $additionalDomainControllerDeploymentSuccess = $false
     $additionalDomainControllerJob = $null
@@ -578,6 +604,11 @@ if ($additionalDomainControllerDeploymentSuccess) {
                     ) as additional domain controller in $(
                         $domainName
                     )"
+
+                Set-NetFirewallRemoteAdministrationAny `
+                    -ComputerName "$PSItem.ad.adatum.com" `
+                    -Credential $adminCredential.adatum
+
                 Start-ADDSInstallDomainControllerJob `
                     -ComputerName "$PSItem.ad.adatum.com" `
                     -Credential $adminCredential.adatum `
@@ -618,7 +649,7 @@ if (-not $forestDeploymentSuccess) {
         if ($newForestJobResult) {
             Write-Error `
                 "Deployment of $(
-                    $additionalDomainController[0]
+                    $newForestJob.Location
                 ) failed with error: $(
                     $newForestJobResult.Message
                 )"
@@ -773,6 +804,14 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
 
 #endregion Exercise 3: Join client to new forest
 
+#region Exercise 3: Check domain controller health
+
+Write-Host '    Exercise 3: Check domain controller health'
+
+#region Task 1: Verify DNS entries for Active Directory
+    
+Write-Host '        Task 1: Verify DNS entries for Active Directory'
+
 #region Wait for additional domain controllers to be deployed
 
 if (-not $additionalDomainControllerDeploymentSuccess) {
@@ -814,14 +853,6 @@ if (-not $additionalDomainControllerDeploymentSuccess) {
 }
 
 #endregion Wait for additional domain controllers to be deployed
-
-#region Exercise 3: Check domain controller health
-
-Write-Host '    Exercise 3: Check domain controller health'
-
-#region Task 1: Verify DNS entries for Active Directory
-    
-Write-Host '        Task 1: Verify DNS entries for Active Directory'
 
 if (-not $additionalDomainControllerDeploymentSuccess) {
     Write-Error 'Additional domain controllers not deployed, skipping task.'
@@ -1168,7 +1199,6 @@ else {
 #endregion Exercise 5: Transfer flexible single master operation roles
 
 
-Get-PSSession | Remove-PSSession
 
 # Wait for DNS server tools installation job to complete
 if ($jobDnsServerTools) {
@@ -1195,6 +1225,7 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
 
 # Clean up
 
+Get-PSSession | Remove-PSSession
 Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
 $endDate = Get-Date
 $timeElapsed = $endDate - $startDate
