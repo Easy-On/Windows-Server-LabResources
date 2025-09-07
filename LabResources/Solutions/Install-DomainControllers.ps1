@@ -804,9 +804,9 @@ if ($env:COMPUTERNAME -eq 'CL3' -and $forestDeploymentSuccess) {
 
 #endregion Exercise 3: Join client to new forest
 
-#region Exercise 3: Check domain controller health
+#region Exercise 4: Check domain controller health
 
-Write-Host '    Exercise 3: Check domain controller health'
+Write-Host '    Exercise 4: Check domain controller health'
 
 #region Task 1: Verify DNS entries for Active Directory
     
@@ -863,107 +863,126 @@ if ($additionalDomainControllerDeploymentSuccess ) {
     $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
     $timeout = 1200 # timeout in seconds
 
-    $psSession = Request-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $expectedDNSRecords = Invoke-Command `
-        -Session $psSession -ScriptBlock {
-            Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
+    try {
+        foreach ($computer in $computerName) {
+            Write-Verbose "Waiting for WinRM on $computer"
+            Wait-WSMan `
+                -ComputerName $computer `
+                -Authentication Default `
+                -Credential $adminCredential.adatum `
+                -Timeout 600 `
+                -ErrorAction Stop
         }
+    }
+    catch {
+        Write-Error "WinRM not available on $computerName"
+        $additionalDomainControllerDeploymentSuccess = $false
+        Write-Error $Error[0]
+    }
 
-    # Query each DNS server
-    foreach ($server in $dnsServers) {
-        # Go through the list of all expected DNS records line by line
-        foreach ($expectedDNSRecord in $expectedDNSRecords) {
+    if ($additionalDomainControllerDeploymentSuccess) {
+        $psSession = Request-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.adatum
 
-            # Split the line into columns using the space delimiter
-            $expectedDNSRecordSplit = $expectedDNSRecord -split ' '
-
-            # First column is the name
-            $name = $expectedDNSRecordSplit[0]
-            # Fourth column is the type
-            $type = $expectedDNSRecordSplit[3]
-            # Last column is the target
-            $target = $expectedDNSRecordSplit[-1]
-
-            $endDate = (Get-Date).AddSeconds($timeout)
-
-            <# 
-                If the target ends with a dot, remove it.
-                Resolve-DnsName will return the target without the ending dot.
-            #>
-            if ($target[-1] -eq '.' ) {
-                $target = $target.Substring(0, $target.Length - 1)
+        $expectedDNSRecords = Invoke-Command `
+            -Session $psSession -ScriptBlock {
+                Get-Content -Path 'C:\Windows\System32\config\netlogon.dns'
             }
 
-            Write-Verbose `
-                "Waiting for $(
-                    $type
-                ) record $(
-                    $name
-                ) pointing to $(
-                    $target
-                ) on DNS server $(
-                    $server
-                ) until $(
-                    $endDate
-                )"
+        # Query each DNS server
+        foreach ($server in $dnsServers) {
+            # Go through the list of all expected DNS records line by line
+            foreach ($expectedDNSRecord in $expectedDNSRecords) {
 
-            do {
-                # Try to resolve the record
-                $dnsRecords = Resolve-DnsName `
-                    -Name $name `
-                    -Type $type `
-                    -Server $server `
-                    -Verbose:$false `
-                    -ErrorAction SilentlyContinue
-    
+                # Split the line into columns using the space delimiter
+                $expectedDNSRecordSplit = $expectedDNSRecord -split ' '
+
+                # First column is the name
+                $name = $expectedDNSRecordSplit[0]
+                # Fourth column is the type
+                $type = $expectedDNSRecordSplit[3]
+                # Last column is the target
+                $target = $expectedDNSRecordSplit[-1]
+
+                $endDate = (Get-Date).AddSeconds($timeout)
+
                 <# 
-                    Check if target is in the result.
-                    Unfortunately the property name for the target varies depending
-                    on the type. Therefore, we mus handle each type separately.
+                    If the target ends with a dot, remove it.
+                    Resolve-DnsName will return the target without the ending dot.
                 #>
-                $missingRecord = $false
-                switch ($type) { 
-                    'A' {  
-                        if ($dnsRecords.IPAddress -notcontains $target) {
-                            $missingRecord = $true
-                        }
-                    }
-                    'SRV' {  
-                        if ($dnsRecords.NameTarget -notcontains $target) {
-                            $missingRecord = $true
-                        }
-                    }
-                    'CNAME' {
-                        if ($dnsRecords.NameHost -notcontains $target) {
-                            $missingRecord = $true
-                        }
-                    }
-                    Default {
-                        Write-Warning "Type $type not expected."
-                    }
+                if ($target[-1] -eq '.' ) {
+                    $target = $target.Substring(0, $target.Length - 1)
                 }
-    
-            } until (
-                -not $missingRecord -or (Get-Date) -gt $endDate
-            )
-            if ($missingRecord) {
-                Write-Error `
-                    "$(
+
+                Write-Verbose `
+                    "Waiting for $(
                         $type
                     ) record $(
                         $name
-                    ) targeting $(
+                    ) pointing to $(
                         $target
-                    ) missing on DNS server $(
-                        $dnsServer
+                    ) on DNS server $(
+                        $server
+                    ) until $(
+                        $endDate
                     )"
-                $additionalDomainControllerDeploymentSuccess = $false
+
+                do {
+                    # Try to resolve the record
+                    $dnsRecords = Resolve-DnsName `
+                        -Name $name `
+                        -Type $type `
+                        -Server $server `
+                        -Verbose:$false `
+                        -ErrorAction SilentlyContinue
+        
+                    <# 
+                        Check if target is in the result.
+                        Unfortunately the property name for the target varies depending
+                        on the type. Therefore, we mus handle each type separately.
+                    #>
+                    $missingRecord = $false
+                    switch ($type) { 
+                        'A' {  
+                            if ($dnsRecords.IPAddress -notcontains $target) {
+                                $missingRecord = $true
+                            }
+                        }
+                        'SRV' {  
+                            if ($dnsRecords.NameTarget -notcontains $target) {
+                                $missingRecord = $true
+                            }
+                        }
+                        'CNAME' {
+                            if ($dnsRecords.NameHost -notcontains $target) {
+                                $missingRecord = $true
+                            }
+                        }
+                        Default {
+                            Write-Warning "Type $type not expected."
+                        }
+                    }
+        
+                } until (
+                    -not $missingRecord -or (Get-Date) -gt $endDate
+                )
+                if ($missingRecord) {
+                    Write-Error `
+                        "$(
+                            $type
+                        ) record $(
+                            $name
+                        ) targeting $(
+                            $target
+                        ) missing on DNS server $(
+                            $dnsServer
+                        )"
+                    $additionalDomainControllerDeploymentSuccess = $false
+                }
             }
-        }
-        if (-not $additionalDomainControllerDeploymentSuccess) {
-            break
+            if (-not $additionalDomainControllerDeploymentSuccess) {
+                break
+            }
         }
     }
 }
@@ -1004,11 +1023,11 @@ else {
 
 #endregion Task 2: Verify shares for Active Directory
 
-#endregion Exercise 3: Check domain controller health
+#endregion Exercise 4: Check domain controller health
 
-#region Exercise 4: Optimize DNS
+#region Exercise 5: Optimize DNS
 
-Write-Host '    Exercise 4: Optimize DNS'
+Write-Host '    Exercise 5: Optimize DNS'
 
 #region Task 1: Configure forwarders on VN1-SRV5 and VN2-SRV1
 
@@ -1118,11 +1137,11 @@ if ($forestDeploymentSuccess) {
 
 #endregion Task 3: Configure forwarders on VN2-SRV2
 
-#endregion Exercise 4: Optimize DNS
+#endregion Exercise 5: Optimize DNS
 
-#region Exercise 5: Transfer flexible single master operation roles
+#region Exercise 6: Transfer flexible single master operation roles
 
-Write-Host '    Exercise 5: Transfer flexible single master operation roles'
+Write-Host '    Exercise 6: Transfer flexible single master operation roles'
 
 #region Task 1: Transfer the domain-wide flexible single master operation roles
 
@@ -1195,9 +1214,8 @@ else {
 }
 
 #endregion Task 2: Transfer the forest-wide flexible single master operation roles
-  
-#endregion Exercise 5: Transfer flexible single master operation roles
 
+#endregion Exercise 6: Transfer flexible single master operation roles
 
 
 # Wait for DNS server tools installation job to complete
