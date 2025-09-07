@@ -870,8 +870,7 @@ if ($additionalDomainControllerDeploymentSuccess ) {
                 -ComputerName $computer `
                 -Authentication Default `
                 -Credential $adminCredential.adatum `
-                -Timeout 600 `
-                -ErrorAction Stop
+                -Timeout 600
         }
     }
     catch {
