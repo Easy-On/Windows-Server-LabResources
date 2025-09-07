@@ -875,7 +875,7 @@ if ($additionalDomainControllerDeploymentSuccess ) {
         }
     }
     catch {
-        Write-Error "WinRM not available on $computerName"
+        Write-Error "WinRM not available on $computer"
         $additionalDomainControllerDeploymentSuccess = $false
         Write-Error $Error[0]
     }
