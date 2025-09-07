@@ -77,9 +77,6 @@ foreach ($moduleName in $Name) {
                             Add-WindowsCapability `
                                 -Online -Name $using:feature.CapabilityName 
                         }
-                    $restartNeeded = $restartNeeded -or (
-                        $windowsCapability | Add-WindowsCapability -Online
-                    ).RestartNeeded
                 } 
                 if ($env:COMPUTERNAME -ne $hostName) {
                     Write-Warning @"
