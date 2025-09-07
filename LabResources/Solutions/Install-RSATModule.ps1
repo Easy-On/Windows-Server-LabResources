@@ -74,8 +74,8 @@ foreach ($moduleName in $Name) {
                     Write-Verbose "Install $Name on $ComputerName"
                     $job = Start-Job `
                         -ScriptBlock { 
-                            Add-WindowsCapability `
-                                -Online -Name $using:feature.CapabilityName 
+                            $using:windowsCapability | 
+                            Add-WindowsCapability -Online
                         }
                 } 
                 if ($env:COMPUTERNAME -ne $hostName) {
