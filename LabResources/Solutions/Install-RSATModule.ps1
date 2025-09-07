@@ -115,8 +115,6 @@ Please run $($MyInvocation.MyCommand) on $computerName.
     }
 }
 
-$psSession | Remove-PSSession
-
 if (-not $AsJob) {
     $jobResult = $job | Wait-Job | Receive-Job
     if ($jobResult) {
@@ -130,6 +128,7 @@ if (-not $AsJob) {
     if ($jobResult.Success -eq $false) {
         Write-Error "Feature $($feature.FeatureName) could not be installed."
     }
+    $psSession | Remove-PSSession
     if ($restartNeeded) {
         if ($hostName -eq $env:COMPUTERNAME) {
             Write-Host @"
