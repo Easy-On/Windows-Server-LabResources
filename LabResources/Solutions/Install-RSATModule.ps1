@@ -115,7 +115,7 @@ Please run $($MyInvocation.MyCommand) on $computerName.
     }
 }
 
-if (-not $AsJob) {
+if ($job -and -not $AsJob) {
     $jobResult = $job | Wait-Job | Receive-Job
     if ($jobResult) {
         if (
