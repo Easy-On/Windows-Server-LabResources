@@ -880,6 +880,8 @@ if ($additionalDomainControllerDeploymentSuccess ) {
     }
 
     if ($additionalDomainControllerDeploymentSuccess) {
+        Write-Verbose `
+            "Retrieving DNS records from netlogon.dns on $computerName"
         $psSession = Request-PSSession `
             -ComputerName $computerName -Credential $adminCredential.adatum
 
