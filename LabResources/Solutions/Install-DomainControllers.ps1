@@ -861,7 +861,7 @@ if (-not $additionalDomainControllerDeploymentSuccess) {
 if ($additionalDomainControllerDeploymentSuccess ) {
     $dnsServers = '10.1.1.8', '10.1.1.40', '10.1.2.8'
     $computerName = '10.1.1.40', '10.1.2.8' # VN1-SRV1, VN2-SRV2
-    $timeout = 1200 # timeout in seconds
+    $timeout = 3600 # timeout in seconds
 
     try {
         foreach ($computer in $computerName) {
@@ -1068,11 +1068,11 @@ Write-Host '        Task 2: Configure DNS client settings'
 if ($additionalDomainControllerDeploymentSuccess) {
     $dNSClientConfigurations = @(
         @{
-            ComputerName = '10.1.1.40' # VN1-SRV5
+            ComputerName = 'VN1-SRV5'
             DesiredServerAddresses = '10.1.2.8', '127.0.0.1'
         }
         @{
-            ComputerName = '10.1.1.8' # VN1-SRV1
+            ComputerName = 'VN1-SRV1'
             DesiredServerAddresses = '10.1.1.40', '10.1.2.8'
         }
     )
