@@ -299,7 +299,7 @@ $trustedHosts = Get-Item -Path $trustedHostsPath
 Set-Item `
     -Path $trustedHostsPath `
     -Value `
-        'VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com, VN2-SRV2.ad.adatum.com, CL1.ad.adatum.com, 10.1.1.40, 10.1.2.8, 10.1.2.16' `
+        'VN1-SRV1.ad.adatum.com, VN1-SRV5.ad.adatum.com, VN2-SRV1.ad.adatum.com, VN2-SRV2.ad.adatum.com, CL1.ad.adatum.com, 10.1.1.8, 10.1.1.40, 10.1.2.8, 10.1.2.16' `
     -Force
 
 <#
@@ -1066,34 +1066,31 @@ else {
 Write-Host '        Task 2: Configure DNS client settings'
 
 if ($additionalDomainControllerDeploymentSuccess) {
-    $computerName = '10.1.1.40' # VN1-SRV5
-    $desiredServerAddresses = '10.1.2.8', '127.0.0.1'
-    $psSession = Request-PSSession `
-        -ComputerName $computerName -Credential $adminCredential.adatum
-
-    $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
-        (
-            Get-NetIPAddress -AddressFamily IPv4 |
-            Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
-        ).InterfaceIndex
-    }
-
-    $dnsClientServerAddress = Invoke-Command -Session $psSession -ScriptBlock { 
-        Get-DnsClientServerAddress `
-            -InterfaceIndex $using:interfaceIndex -AddressFamily IPv4
-    }
-
-    # Determine if DNS client server addresses need to be changed
-
-    $serverAddresses = (
-        $dnsClientServerAddress.ServerAddresses | 
-        Where-Object { $PSItem -notin $desiredServerAddresses }
-    ) -join (
-        $desiredServerAddress |
-        Where-Object { $PSItem -notin $dnsClientServerAddresses.ServerAddresses }
+    $dNSClientConfigurations = @(
+        @{
+            ComputerName = '10.1.1.40' # VN1-SRV5
+            DesiredServerAddresses = '10.1.2.8', '127.0.0.1'
+        }
+        @{
+            ComputerName = '10.1.1.8' # VN1-SRV1
+            DesiredServerAddresses = '10.1.1.40', '10.1.2.8'
+        }
     )
-
-    if ($serverAddresses) {
+    foreach ($dNSClientConfiguration in $dNSClientConfigurations) {
+        $computerName = $dNSClientConfiguration.ComputerName
+        $desiredServerAddresses = $dNSClientConfiguration.DesiredServerAddresses
+        $psSession = Request-PSSession `
+            -ComputerName $computerName -Credential $adminCredential.adatum
+    
+        Write-Verbose `
+            "Determining interface index of network adapter connected to VNet1 on $computerName"
+        $interfaceIndex = Invoke-Command -Session $psSession -ScriptBlock {
+            (
+                Get-NetIPAddress -AddressFamily IPv4 |
+                Where-Object { $PSItem.IPAddress -like '10.1.1.*' }
+            ).InterfaceIndex
+        }
+    
         Write-Verbose `
             "Set DNS client server addresses to $(
                 $desiredServerAddresses
@@ -1105,6 +1102,7 @@ if ($additionalDomainControllerDeploymentSuccess) {
                 -InterfaceIndex $using:interfaceIndex `
                 -ServerAddresses $using:desiredServerAddresses `
         }
+    
     }
 } else {
     Write-Error 'Additional domain controllers not deployed, skipping task.'
@@ -1242,7 +1240,7 @@ if ($domainJoinSuccess -and $env:COMPUTERNAME -eq 'CL3') {
     $restartNeeded = $true
 }
 
-# Clean up
+#region Clean up
 
 Get-PSSession | Remove-PSSession
 Set-Item -Path $trustedHostsPath -Value $trustedHosts.Value -Force
@@ -1250,9 +1248,10 @@ $endDate = Get-Date
 $timeElapsed = $endDate - $startDate
 Write-Verbose "Time elapsed: $timeElapsed"
 
-
 if ($restartNeeded) {
     Write-Host 'The local computer needs a restart'
     Read-Host 'Press ENTER to restart'
     Restart-Computer
 }
+
+#endregion Clean up
