@@ -16,7 +16,7 @@ jobs:
     - name: Create Folder Structure
       run: |
         set -e  # Cancel on error
-        rm -rf .github .vscode .gitignore
+        rm -rf .git .github .vscode .gitignore
         zip -r Labresources.zip .
 
     - name: Create GitHub Release
