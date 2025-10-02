@@ -17,6 +17,7 @@ jobs:
       run: |
         set -e  # Cancel on error
         rm -rf .git .github .vscode .gitignore
+        mv README.md ./LabResources
         zip -r Labresources.zip .
 
     - name: Create GitHub Release
